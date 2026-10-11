@@ -106,7 +106,7 @@ display:
     id: myDisplay
     offset_x: 0
     offset_y: 0
-    rotation: 0
+    rotation: 180
     update_interval: 0.1s
 
     

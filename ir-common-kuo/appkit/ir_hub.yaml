@@ -1682,9 +1682,11 @@ script:
           }
 
           if (!id(global_token_clear_armed)) {
-            id(action_string).assign(found_cmd->action_string);
+            // Securely lock the string from the clean, validated command name 
+            // instead of running an array re-indexing loop
+            id(action_string).assign(cmd_name);
             
-            if (get_bound_macro_slot(found_cmd->action_string) != 255) {
+            if (get_bound_macro_slot(cmd_name.c_str()) != 255) {
               id(action_string).append(" *");
             } else if (event_state == KEY_EVENT_HOLDING && current_duration >= 4000) {
               id(action_string).append(" [hold]");
@@ -1703,6 +1705,7 @@ script:
           if (id(showing_special_info) == true) {
             id(showing_special_expiration_timer).execute();
           } else {
+            // We cleanly pass the optimized action_string here
             id(display_show)->execute(false, id(action_string), addressStr, commandStr);
           }
 

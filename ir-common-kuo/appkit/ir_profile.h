@@ -238,7 +238,7 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
 
     // PATHWAY A: MODERN GOOGLE TV TARGETS (e.g., Horizon 20)
     // All navigation and audio keys route via the Consumer Control profile
-    if (std::strcmp(name, "back") == 0)              { out_type = HID_REPORT_CONSUMER; return 0x0224; }
+    if      (std::strcmp(name, "back") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x0224; }
     else if (std::strcmp(name, "home") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x0223; }
     else if (std::strcmp(name, "settings_menu") == 0){ out_type = HID_REPORT_CONSUMER; return 0x009C; }
     else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_CONSUMER; return 0x00E9; }
@@ -249,7 +249,7 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
 
     // PATHWAY B: STANDARD ANDROID TV TARGETS (e.g., Titan Noir)
     // Uses original Keyboard layouts to preserve standard remote control operation
-    if (std::strcmp(name, "back") == 0)              { out_type = HID_REPORT_KEYBOARD; return 0x29; }
+    if      (std::strcmp(name, "back") == 0)         { out_type = HID_REPORT_KEYBOARD; return 0x29; }
     else if (std::strcmp(name, "home") == 0)         { out_type = HID_REPORT_KEYBOARD; return 0x4A; }
     else if (std::strcmp(name, "settings_menu") == 0){ out_type = HID_REPORT_KEYBOARD; return 0x41; }
     else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_KEYBOARD; return 0x80; }
@@ -1651,6 +1651,15 @@ inline esp_err_t root_handler(httpd_req_t *req) {
     if (free_heap > 0) {
         fragmentation_percentage = (1.0f - ((float)largest_free_block / (float)free_heap)) * 100.0f;
     }
+    // Calculate uptime metrics in Days:Hours:Minutes format safely without dynamic allocation
+    uint32_t total_seconds = millis() / 1000;
+    uint32_t up_days       = total_seconds / 86400;
+    total_seconds         %= 86400;
+    uint32_t up_hours      = total_seconds / 3600;
+    total_seconds         %= 3600;
+    uint32_t up_minutes    = total_seconds / 60;
+
+    
 
     // CHUNK 1: Document head, CSS formatting styles, and Profile Selection Form
     httpd_resp_send_chunk(req, R"rawliteral(<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1708,6 +1717,55 @@ inline esp_err_t root_handler(httpd_req_t *req) {
   }
   window.onload = updateActionUrls;
 </script>
+<script>
+  function updateActionUrls(){
+    const idx = document.getElementById('profile_sel').value;
+    document.getElementById('export_link').href = '/export?slot=' + idx;
+    document.getElementById('upload_form').action = '/import?slot=' + idx;
+  }
+  function sendClick(actionName) {
+    fetch('/button_inject?action=' + actionName);
+  }
+  
+  // High-efficiency, stateless mathematical browser clock engine
+  function startUptimeTicker() {
+    const el = document.getElementById("uptime_val");
+    if (!el) return;
+
+    // Pull precise starting numbers out of our custom HTML attributes
+    let days  = parseInt(el.getAttribute("data-days"), 10) || 0;
+    let hours = parseInt(el.getAttribute("data-hours"), 10) || 0;
+    let mins  = parseInt(el.getAttribute("data-mins"), 10) || 0;
+
+    setInterval(() => {
+      mins++;
+      if (mins >= 60) {
+        mins = 0;
+        hours++;
+        if (hours >= 24) {
+          hours = 0;
+          days++;
+        }
+      }
+      
+      // Update DOM structural text with zero layout shifts or page flashes
+      el.textContent = `${days} d : ${String(hours).padStart(2, '0')} h : ${String(mins).padStart(2, '0')} m`;
+      
+      // Keep structural metadata cells synced to prevent mathematical drift
+      el.setAttribute("data-days", days);
+      el.setAttribute("data-hours", hours);
+      el.setAttribute("data-mins", mins);
+    }, 60000); // Trigger precise updates exactly on a 60-second polling boundary cycle
+  }
+
+  // Combined activation pipeline loop initialization
+  window.onload = function() {
+    updateActionUrls();
+    startUptimeTicker();
+  };
+</script>
+
+
 </head><body>
 <div class="box">
   <h3>Profile Management: 
@@ -1888,9 +1946,12 @@ Use  </div>
     snprintf(scratch, sizeof(scratch), "<div class=\"diag-item\"><div class=\"stat-lbl\">Max Block</div><div class=\"stat-val\">%u Bytes</div></div>", (unsigned int)largest_free_block);
     httpd_resp_send_chunk(req, scratch, strlen(scratch));
 
-    snprintf(scratch, sizeof(scratch), "<div class=\"diag-item span-2\"><div class=\"stat-lbl\">Free Stack Space</div><div class=\"stat-val\">%u Bytes</div></div>", (unsigned int)uxTaskGetStackHighWaterMark(NULL));
+    snprintf(scratch, sizeof(scratch), "<div class=\"diag-item\"><div class=\"stat-lbl\">Free Stack Space</div><div class=\"stat-val\">%u Bytes</div></div>", (unsigned int)uxTaskGetStackHighWaterMark(NULL));
     httpd_resp_send_chunk(req, scratch, strlen(scratch));
     
+    snprintf(scratch, sizeof(scratch), "<div class=\"diag-item\"><div class=\"stat-lbl\">Uptime</div><div class=\"stat-val\" id=\"uptime_val\" data-days=\"%u\" data-hours=\"%u\" data-mins=\"%u\" style=\"color:#79c0ff\">%u d    %02u h    %02u m</div></div>", (unsigned int)up_days, (unsigned int)up_hours, (unsigned int)up_minutes, (unsigned int)up_days, (unsigned int)up_hours, (unsigned int)up_minutes);
+    httpd_resp_send_chunk(req, scratch, strlen(scratch));
+
     // --------------------------------------------------------------------
     // CHUNK 5: FOOTER CLOSE & PIPELINE SIGNOFF
     // --------------------------------------------------------------------
