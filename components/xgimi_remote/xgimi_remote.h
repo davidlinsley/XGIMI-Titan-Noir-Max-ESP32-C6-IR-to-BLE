@@ -29,15 +29,18 @@ class XgimiRemote : public Component {
   void start_pairing_mode();
   void clear_bonds();
 
-  // 🎹 KEYBOARD DRIVER ACTIONS
+  // KEYBOARD DRIVER ACTIONS
   void press_keyboard(uint8_t usage);
   void hold_keyboard(uint8_t usage);
   void release_held_keyboard_();
 
-  // 📺 CONSUMER DRIVER ACTIONS
+  // CONSUMER DRIVER ACTIONS
   void press_consumer(uint16_t usage);
   void hold_consumer(uint16_t usage);
   void release_held_consumer_();
+  
+  // SYSTEM CONTROL ACTION (REPORT ID 3)
+  void press_system(uint8_t usage);
 
   bool is_connected() const { return this->connected_; }
   bool is_authenticated() const { return this->authenticated_; }

@@ -201,38 +201,64 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
     }
 #endif
     // ====================================================================
-    // REGULAR ACTIONS
+    // CONSTANT KEYBOARD PATHS (Directional / Text Grids)
+    // Common to both projector architectures
     // ====================================================================
-
-    else if (std::strcmp(name, "cursor_up") == 0)     { out_type = HID_REPORT_KEYBOARD; return 0x52; }
-    else if (std::strcmp(name, "cursor_down") == 0)   { out_type = HID_REPORT_KEYBOARD; return 0x51; }
-    else if (std::strcmp(name, "cursor_left") == 0)   { out_type = HID_REPORT_KEYBOARD; return 0x50; }
-    else if (std::strcmp(name, "cursor_right") == 0)  { out_type = HID_REPORT_KEYBOARD; return 0x4F; }
-    else if (std::strcmp(name, "cursor_enter") == 0)  { out_type = HID_REPORT_KEYBOARD; return 0x28; }
-    else if (std::strcmp(name, "settings_menu") == 0) { out_type = HID_REPORT_KEYBOARD; return 0x41; }
-    else if (std::strcmp(name, "back") == 0)          { out_type = HID_REPORT_KEYBOARD; return 0x29; }
-    else if (std::strcmp(name, "home") == 0)          { out_type = HID_REPORT_KEYBOARD; return 0x4A; }
-    else if (std::strcmp(name, "game_menu") == 0)     { out_type = HID_REPORT_KEYBOARD; return 0x65; }
-    else if (std::strcmp(name, "focus_manual") == 0)  { out_type = HID_REPORT_KEYBOARD; return 0x3D; }
-    else if (std::strcmp(name, "focus_auto") == 0)    { out_type = HID_REPORT_KEYBOARD; return 0x44; }
-    else if (std::strcmp(name, "volume_up") == 0)     { out_type = HID_REPORT_KEYBOARD; return 0x80; }
-    else if (std::strcmp(name, "volume_down") == 0)   { out_type = HID_REPORT_KEYBOARD; return 0x81; }
+    if (std::strcmp(name, "cursor_up") == 0)        { out_type = HID_REPORT_KEYBOARD; return 0x52; }
+    else if (std::strcmp(name, "cursor_down") == 0)  { out_type = HID_REPORT_KEYBOARD; return 0x51; }
+    else if (std::strcmp(name, "cursor_left") == 0)  { out_type = HID_REPORT_KEYBOARD; return 0x50; }
+    else if (std::strcmp(name, "cursor_right") == 0) { out_type = HID_REPORT_KEYBOARD; return 0x4F; }
+    else if (std::strcmp(name, "cursor_enter") == 0) { out_type = HID_REPORT_KEYBOARD; return 0x28; }
+    else if (std::strcmp(name, "game_menu") == 0)    { out_type = HID_REPORT_KEYBOARD; return 0x65; }
+    else if (std::strcmp(name, "focus_manual") == 0) { out_type = HID_REPORT_KEYBOARD; return 0x3D; }
+    else if (std::strcmp(name, "focus_auto") == 0)   { out_type = HID_REPORT_KEYBOARD; return 0x44; }
 
     else if (std::strcmp(name, "custom_1") == 0 || std::strcmp(name, "custom_2") == 0 || 
              std::strcmp(name, "custom_3") == 0 || std::strcmp(name, "custom_4") == 0 || 
              std::strcmp(name, "custom_5") == 0 || std::strcmp(name, "custom_6") == 0 || 
              std::strcmp(name, "custom_7") == 0 || std::strcmp(name, "custom_8") == 0)      
-                                                      { out_type = HID_REPORT_KEYBOARD; return 0x4A; }
+                                                     { out_type = HID_REPORT_KEYBOARD; return 0x4A; }
 
-    // CONSUMER RESOLUTION PATH (REPORT TYPE 1)
+    // ====================================================================
+    // NATIVE FIXED CONSUMER APP SHORTCUTS (Unchanged)
+    // Common to both projector architectures
+    // ====================================================================
     else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_CONSUMER; return 0x01BC; }
     else if (std::strcmp(name, "picture") == 0)      { out_type = HID_REPORT_CONSUMER; return 0x0223; }
     else if (std::strcmp(name, "shortcut_1") == 0)   { out_type = HID_REPORT_CONSUMER; return 0x021D; }
     else if (std::strcmp(name, "shortcut_2") == 0)   { out_type = HID_REPORT_CONSUMER; return 0x021F; }
     else if (std::strcmp(name, "shortcut_3") == 0)   { out_type = HID_REPORT_CONSUMER; return 0x0221; }
     else if (std::strcmp(name, "shortcut_4") == 0)   { out_type = HID_REPORT_CONSUMER; return 0x0222; }
+
+    // ====================================================================
+    // DYNAMIC UI NAVIGATION & AUDIO CONTROLS 
+    // Separated into clean, self-contained compile-time blocks
+    // ====================================================================
+#ifdef ENABLE_GOOGLETV_BLE_CODES
+
+    // PATHWAY A: MODERN GOOGLE TV TARGETS (e.g., Horizon 20)
+    // All navigation and audio keys route via the Consumer Control profile
+    if (std::strcmp(name, "back") == 0)              { out_type = HID_REPORT_CONSUMER; return 0x0224; }
+    else if (std::strcmp(name, "home") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x0223; }
+    else if (std::strcmp(name, "settings_menu") == 0){ out_type = HID_REPORT_CONSUMER; return 0x009C; }
+    else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_CONSUMER; return 0x00E9; }
+    else if (std::strcmp(name, "volume_down") == 0)  { out_type = HID_REPORT_CONSUMER; return 0x00EA; }
+    else if (std::strcmp(name, "mute") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x00E2; }
+
+#else
+
+    // PATHWAY B: STANDARD ANDROID TV TARGETS (e.g., Titan Noir)
+    // Uses original Keyboard layouts to preserve standard remote control operation
+    if (std::strcmp(name, "back") == 0)              { out_type = HID_REPORT_KEYBOARD; return 0x29; }
+    else if (std::strcmp(name, "home") == 0)         { out_type = HID_REPORT_KEYBOARD; return 0x4A; }
+    else if (std::strcmp(name, "settings_menu") == 0){ out_type = HID_REPORT_KEYBOARD; return 0x41; }
+    else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_KEYBOARD; return 0x80; }
+    else if (std::strcmp(name, "volume_down") == 0)  { out_type = HID_REPORT_KEYBOARD; return 0x81; }
     else if (std::strcmp(name, "mute") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x01BD; }
-    
+
+#endif
+
+    // Catch-all safety fallback boundary drop
     out_type = HID_REPORT_TOKEN_NONE; 
     return 0xFFFF;
 }
@@ -529,12 +555,11 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
             esphome::id(xgimi_remote_controller).hold_consumer(true_hid_code);
         }
         else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
-            // Transmit via std::vector wrapper to satisfy BLECharacteristic::set_value() signature tracks
-            esphome::id(xgimi_keyboard_report).set_value(std::vector<uint8_t>{ (uint8_t)true_hid_code });
+            // 🛠️ FIXED: Routes safely through the driver layer to prevent length drops
+            esphome::id(xgimi_remote_controller).press_system((uint8_t)true_hid_code);
         }
     }
     else if (event_state == KEY_EVENT_HOLDING) {
-        // Consumer frames do not use typematic repeat pulses; maintain baseline downstream state directly
         if (resolved_type == HID_REPORT_KEYBOARD) {
             esphome::id(xgimi_remote_controller).hold_keyboard((uint8_t)true_hid_code);
         }
@@ -542,7 +567,8 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
             esphome::id(xgimi_remote_controller).hold_consumer(true_hid_code);
         }
         else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
-            esphome::id(xgimi_keyboard_report).set_value(std::vector<uint8_t>{ (uint8_t)true_hid_code });
+            // System Control parameters don't use standard repeats; pass safely
+            esphome::id(xgimi_remote_controller).press_system((uint8_t)true_hid_code);
         }
     }
     else if (event_state == KEY_EVENT_UP) {
@@ -550,12 +576,11 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
             esphome::id(xgimi_remote_controller).release_held_keyboard_();
         }
         else if (resolved_type == HID_REPORT_CONSUMER) {
-            esphome::id(xgimi_remote_controller).hold_consumer(0x0000); // Send explicit zeroed release frame
+            esphome::id(xgimi_remote_controller).hold_consumer(0x0000); 
             esphome::id(xgimi_remote_controller).release_held_consumer_();
         }
         else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
-            // Send explicit clear frame down to the System Control BLE stack characteristic using initializer list mapping
-            esphome::id(xgimi_keyboard_report).set_value({ 0x00 });
+            // The custom press_system wrapper handles its own structural cleanups automatically
         }
     }
 }

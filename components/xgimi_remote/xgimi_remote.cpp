@@ -324,4 +324,27 @@ void XgimiRemote::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb
   }
 }
 
+void XgimiRemote::press_system(uint8_t usage) {
+  if (this->server_ == nullptr || this->keyboard_report_ == nullptr ||
+      this->server_->get_connected_client_count() == 0) {
+    return;
+  }
+  
+  // Your System Control map expects a single byte payload.
+  // However, because it shares the physical characteristic with the keyboard mapping,
+  // we must pass it cleanly as a 2-byte vector where Byte 0 is the Report ID (0x03)
+  // and Byte 1 is the active System Control Usage value.
+  uint8_t press[2]   = {0x03, usage};
+  uint8_t release[2] = {0x03, 0x00};
+  
+  this->keyboard_report_->set_value(std::vector<uint8_t>(press, press + 2));
+  this->keyboard_report_->notify();
+  
+  // Maintain stability window parameters safely
+  delay(50); 
+  
+  this->keyboard_report_->set_value(std::vector<uint8_t>(release, release + 2));
+  this->keyboard_report_->notify();
+}
+
 }  // namespace esphome::xgimi_remote

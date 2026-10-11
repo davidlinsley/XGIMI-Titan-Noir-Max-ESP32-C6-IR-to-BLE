@@ -709,34 +709,34 @@ script:
                     // Check if this step is a release edge meant to hold down an active key
                     return (active_recording_buffer.steps[idx].event_state == KEY_EVENT_UP && id(macro_last_event_time) > 400);
                 then:
-                  # --- SUSTAINED HOLD STREAMING GATES (> 400ms) ---
+                  # ---  SUSTAINED HOLD STREAMING GATES MATCHING 15MS LOW-LEVEL PACKET PACING ---
                   - while:
                       condition:
-                        lambda: 'return (id(macro_last_event_time) > 35);'
+                        lambda: 'return (id(macro_last_event_time) > 15);'
                       then:
-                        - delay: 35ms
+                        - delay: 15ms
                         - lambda: |-
                             extern UniversalFlashMacro active_recording_buffer;
                             int idx = id(macro_step_counter);
                             const auto& step = active_recording_buffer.steps[idx];
 
                             // Issue continuous keep-alive updates using the HOLDING state (1)
-                            ESP_LOGV("MACRO_PLAY", "Sending Keep-Alive frame for: %s", step.action_string);
+                            ESP_LOGV("MACRO_PLAY", "Sending Low-Latency Keep-Alive frame for: %s", step.action_string);
                             fire_bluetooth_hid_action(step.action_string, KEY_EVENT_HOLDING); 
 
-                            // Deduct the elapsed interval from our pacing tracking cache
-                            id(macro_last_event_time) -= 35;
+                            // Deduct the synchronized 15ms interval from our pacing tracking cache
+                            id(macro_last_event_time) -= 15;
                   
-                  # Consume any small remaining remainder window under 40ms cleanly
+                  # Consume any remaining small fractional remainder window under 15ms cleanly
                   - delay: !lambda "return id(macro_last_event_time);"
 
                 else:
-                  # --- STANDARD TAP DELAY PATH (<= 300ms) ---
+                  # --- STANDARD TAP DELAY PATH (<= 400ms) ---
                   - delay: !lambda "return id(macro_last_event_time);"
 
 
             # ============================================================
-            # STEP B: UNIFIED HYBRID DRIVER INJECTION PIPELINE (PLAYBACK)
+            # STEP B: LOW-OVERHEAD INJECTION PIPELINE (PLAYBACK)
             # ============================================================
             - lambda: |-
                 extern UniversalFlashMacro active_recording_buffer;
@@ -747,31 +747,27 @@ script:
                   ESP_LOGI("MACRO_PLAY", "Firing Step [%d]: DOWN -> '%s'", idx, step.action_string);
                   
                   if (std::strcmp(step.action_string, "power_on") == 0) {
-                    id(power_on).press();
-                    id(macro_step_counter) = idx + 1;
-                    return;
+                    id(power_on).press(); // Safely fires your wake token blast script
                   }
                   else if (std::strcmp(step.action_string, "power_off") == 0) {
-                    id(power_off).press();
-                    id(macro_step_counter) = idx + 1;
-                    return;
+                    id(power_off).press(); // Safely executes sustained power-off drop scripts
                   }
-                                    
-                  // 🛠️ FIX: Direct pass-through to your existing, unified injection engine!
-                  fire_bluetooth_hid_action(step.action_string, KEY_EVENT_DOWN); // 0 = DOWN
+                  else {
+                    // Standard routing for regular keys
+                    fire_bluetooth_hid_action(step.action_string, KEY_EVENT_DOWN); 
+                  }
                 }
                 else if (step.event_state == KEY_EVENT_UP) {
                   ESP_LOGI("MACRO_PLAY", "Firing Step [%d]: UP -> Releasing '%s'", idx, step.action_string);
                   
-                  if (std::strcmp(step.action_string, "power_on") == 0 || std::strcmp(step.action_string, "power_off") == 0) {
-                    id(macro_step_counter) = idx + 1;
-                    return;
+                  if (std::strcmp(step.action_string, "power_on") != 0 && std::strcmp(step.action_string, "power_off") != 0) {
+                    // Scripted operations manage their own release windows.
+                    // Only process standard pass-through physical keys here.
+                    fire_bluetooth_hid_action(step.action_string, KEY_EVENT_UP); 
                   }
-           
-                  // 🛠️ FIX: Direct pass-through to your existing, unified injection engine!
-                  fire_bluetooth_hid_action(step.action_string, KEY_EVENT_UP); // 2 = UP
                 }
                 
+                // Advance the loop step index counter naturally without disrupting loop delays
                 id(macro_step_counter) = idx + 1;
 
       - lambda: |-
