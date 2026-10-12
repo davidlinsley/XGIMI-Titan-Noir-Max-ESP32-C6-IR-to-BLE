@@ -1334,8 +1334,6 @@ script:
                   active_profile_workspace.profile_name = "Memory " + std::to_string(selected_slot);
                   active_profile_workspace.protocol = id(learn_active_protocol);
                   active_profile_workspace.device_address = id(learn_active_address);
-                  active_profile_workspace.cmd_clear_token_arm = id(session_captured_codes).at(23);
-                  active_profile_workspace.cmd_clear_token_fire = id(session_captured_codes).at(6);
 
                   active_profile_workspace.cmd_codes.clear();
                   active_profile_workspace.cmd_codes.reserve((int)TOTAL_SYSTEM_BUTTONS);

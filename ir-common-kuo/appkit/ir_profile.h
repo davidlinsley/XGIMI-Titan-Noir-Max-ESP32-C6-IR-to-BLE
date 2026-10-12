@@ -80,9 +80,9 @@ inline constexpr uint16_t MAX_LEARNED_PROFILES = 3;
 inline bool flash_hydration_complete = false;
 
 #ifdef ENABLE_EXTRA_BUTTONS
-  inline constexpr uint32_t CURRENT_PROFILE_VERSION = 1025; // Power user footprint track
+  inline constexpr uint32_t CURRENT_PROFILE_VERSION = 1026; // Power user footprint track
 #else
-  inline constexpr uint32_t CURRENT_PROFILE_VERSION = 69; // <-- increment this change in NVRAM storage structures
+  inline constexpr uint32_t CURRENT_PROFILE_VERSION = 70; // <-- increment this change in NVRAM storage structures
 #endif
 
 
@@ -369,8 +369,6 @@ struct IRProfile {
   std::string profile_name;
   uint8_t protocol;
   uint32_t device_address;
-  uint32_t cmd_clear_token_arm;  
-  uint32_t cmd_clear_token_fire; 
   // Field 1: The hex code acts as the lookup index paired to your 2 string elements
   std::vector<std::pair<uint32_t, IRCommand>> cmd_codes; 
 };
@@ -395,8 +393,6 @@ struct FlashStoredProfile {
   uint8_t protocol;              
   uint8_t reserved_padding[3];   // Padding to maintain strict 32-bit alignment structure
   uint32_t device_address;
-  uint32_t cmd_clear_token_arm;  
-  uint32_t cmd_clear_token_fire; 
   uint16_t total_keys;
   FlashStoredKey keys[80];       // Centralized configuration ceiling cap
 };
@@ -489,8 +485,6 @@ inline void commit_database_to_flash(uint16_t target_slot) {
   std::strncpy(flash_p.profile_name, active_profile_workspace.profile_name.c_str(), sizeof(flash_p.profile_name) - 1);
   flash_p.protocol = active_profile_workspace.protocol; 
   flash_p.device_address = active_profile_workspace.device_address;
-  flash_p.cmd_clear_token_arm = active_profile_workspace.cmd_clear_token_arm;
-  flash_p.cmd_clear_token_fire = active_profile_workspace.cmd_clear_token_fire;
 
   uint16_t k_idx = 0;
   for (const auto& kv_pair : active_profile_workspace.cmd_codes) {
@@ -1164,7 +1158,9 @@ static const char* const factory_names[] = {
 };
     
     
-// THE UNIFIED ON-DEMAND DYNAMIC HYDRATION ENGINE
+// ====================================================================
+// ON-DEMAND DYNAMIC HYDRATION ENGINE (FACTORY PROFILES MAP)
+// ====================================================================
 inline void load_profile_to_workspace(int idx) {
   active_profile_workspace.cmd_codes.clear();
   int factory = static_cast<int>(factory_count);
@@ -1180,8 +1176,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "AWOL Projector";
         active_profile_workspace.protocol = PROTO_NEC;
         active_profile_workspace.device_address = 0xCE00;
-        active_profile_workspace.cmd_clear_token_arm = 0xE51A;
-        active_profile_workspace.cmd_clear_token_fire = 0xD728;
         flash_array = AWOL_COMMANDS;
         array_size = sizeof(AWOL_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1189,8 +1183,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "BenQ Projector";
         active_profile_workspace.protocol = PROTO_NEC;
         active_profile_workspace.device_address = 0x3000;
-        active_profile_workspace.cmd_clear_token_arm = 0x629D;
-        active_profile_workspace.cmd_clear_token_fire = 0xEA15;
         flash_array = BENQ_COMMANDS;
         array_size = sizeof(BENQ_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1198,8 +1190,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "Epson Projector";
         active_profile_workspace.protocol = PROTO_NEC;
         active_profile_workspace.device_address = 0x5583;
-        active_profile_workspace.cmd_clear_token_arm = 0xC23D;
-        active_profile_workspace.cmd_clear_token_fire = 0x7A85;
         flash_array = EPSON_COMMANDS;
         array_size = sizeof(EPSON_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1207,8 +1197,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "Hisense";
         active_profile_workspace.protocol = PROTO_NEC;
         active_profile_workspace.device_address = 0xFB04;
-        active_profile_workspace.cmd_clear_token_arm = 0xEA15;
-        active_profile_workspace.cmd_clear_token_fire = 0xA55A;
         flash_array = HISENSE_COMMANDS;
         array_size = sizeof(HISENSE_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1216,8 +1204,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "JVC HR-S9600u VCR";
         active_profile_workspace.protocol = PROTO_JVC;
         active_profile_workspace.device_address = 0x03C2;
-        active_profile_workspace.cmd_clear_token_arm = 0xC2A4;
-        active_profile_workspace.cmd_clear_token_fire = 0xC23C;
         flash_array = JVC_VCR_COMMANDS;
         array_size = sizeof(JVC_VCR_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1225,8 +1211,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "JVC Projector A";
         active_profile_workspace.protocol = PROTO_JVC;
         active_profile_workspace.device_address = 0xCE;
-        active_profile_workspace.cmd_clear_token_arm = 0x56;
-        active_profile_workspace.cmd_clear_token_fire = 0xF4;
         flash_array = JVC_PROJ_A_COMMANDS;
         array_size = sizeof(JVC_PROJ_A_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1234,8 +1218,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "JVC Projector B";
         active_profile_workspace.protocol = PROTO_JVC;
         active_profile_workspace.device_address = 0x36;
-        active_profile_workspace.cmd_clear_token_arm = 0x56;
-        active_profile_workspace.cmd_clear_token_fire = 0xF4;
         flash_array = JVC_PROJ_B_COMMANDS;
         array_size = sizeof(JVC_PROJ_B_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1243,8 +1225,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "LG Projector";
         active_profile_workspace.protocol = PROTO_NEC;
         active_profile_workspace.device_address = 0xFB04;
-        active_profile_workspace.cmd_clear_token_arm = 0xEA15;
-        active_profile_workspace.cmd_clear_token_fire = 0xBB44;
         flash_array = LG_COMMANDS;
         array_size = sizeof(LG_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1252,8 +1232,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "Optoma Projector";
         active_profile_workspace.protocol = PROTO_NEC;
         active_profile_workspace.device_address = 0xCD32;
-        active_profile_workspace.cmd_clear_token_arm = 0x9A65;
-        active_profile_workspace.cmd_clear_token_fire = 0xF00F;
         flash_array = OPTOMA_COMMANDS;
         array_size = sizeof(OPTOMA_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1261,8 +1239,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "Sony Projector";
         active_profile_workspace.protocol = PROTO_SONY;
         active_profile_workspace.device_address = 0x0000;
-        active_profile_workspace.cmd_clear_token_arm = 0x8AB54;
-        active_profile_workspace.cmd_clear_token_fire = 0x02D2A;
         flash_array = SONY_PROJ_COMMANDS;
         array_size = sizeof(SONY_PROJ_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1270,8 +1246,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "Sony XBR";
         active_profile_workspace.protocol = PROTO_SONY;
         active_profile_workspace.device_address = 0x0000;
-        active_profile_workspace.cmd_clear_token_arm = 0x0210;
-        active_profile_workspace.cmd_clear_token_fire = 0x0A70;
         flash_array = SONY_XBR_COMMANDS;
         array_size = sizeof(SONY_XBR_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1279,8 +1253,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "TiVo Roamio";
         active_profile_workspace.protocol = PROTO_NEC;
         active_profile_workspace.device_address = 0x3085;
-        active_profile_workspace.cmd_clear_token_arm = 0xD02C;
-        active_profile_workspace.cmd_clear_token_fire = 0xE019;
         flash_array = TIVO_COMMANDS;
         array_size = sizeof(TIVO_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1288,8 +1260,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = "Panasonic Projector";
         active_profile_workspace.protocol = PROTO_PANASONIC;
         active_profile_workspace.device_address = 0x4004;
-        active_profile_workspace.cmd_clear_token_arm = 0x1002829;
-        active_profile_workspace.cmd_clear_token_fire = 0x1009293;
         flash_array = PANASONIC_COMMANDS;
         array_size = sizeof(PANASONIC_COMMANDS) / sizeof(FlashCommandRow);
     }
@@ -1337,8 +1307,6 @@ inline void load_profile_to_workspace(int idx) {
         active_profile_workspace.profile_name = flash_p.profile_name;
         active_profile_workspace.protocol = flash_p.protocol;
         active_profile_workspace.device_address = flash_p.device_address;
-        active_profile_workspace.cmd_clear_token_arm = flash_p.cmd_clear_token_arm;
-        active_profile_workspace.cmd_clear_token_fire = flash_p.cmd_clear_token_fire;
         
         uint16_t load_limit = (flash_p.total_keys > 80) ? 80 : flash_p.total_keys;
         active_profile_workspace.cmd_codes.resize(load_limit);
@@ -1422,8 +1390,6 @@ inline std::string generate_profile_csv(int idx) {
   char fire_buf[32];
   
   snprintf(addr_buf, sizeof(addr_buf), addr_fmt, (unsigned int)p.device_address);
-  snprintf(arm_buf, sizeof(arm_buf), key_fmt, (unsigned int)p.cmd_clear_token_arm);
-  snprintf(fire_buf, sizeof(fire_buf), key_fmt, (unsigned int)p.cmd_clear_token_fire);
   
   snprintf(chunk_buf, sizeof(chunk_buf), "%s,%s,%s\n", addr_buf, arm_buf, fire_buf);
   csv_out += meta_line + chunk_buf;
@@ -1536,14 +1502,11 @@ inline bool import_profile_from_csv(const std::string& csv_data) {
             };
 
             active_profile_workspace.device_address = parse_hex_view(addr_view);
-            active_profile_workspace.cmd_clear_token_arm = parse_hex_view(arm_view);
-            active_profile_workspace.cmd_clear_token_fire = parse_hex_view(fire_view);
 
             meta_parsed = true;
-            ESP_LOGI("CSV Import", "Metadata locked. Profile: %s, Address: 0x%X, Arm Token: 0x%X",
+            ESP_LOGI("CSV Import", "Metadata locked. Profile: %s, Address: 0x%X",
                      active_profile_workspace.profile_name.c_str(), 
-                     (unsigned int)active_profile_workspace.device_address,
-                     (unsigned int)active_profile_workspace.cmd_clear_token_arm);
+                     (unsigned int)active_profile_workspace.device_address);
         }
         
         // -----------------------------------------------------------
@@ -2103,8 +2066,6 @@ inline esp_err_t export_handler(httpd_req_t *req) {
     // 1. Stream the META row directly
     char addr_buf[16], arm_buf[16], fire_buf[16];
     snprintf(addr_buf, sizeof(addr_buf), addr_fmt, (unsigned int)p.device_address);
-    snprintf(arm_buf, sizeof(arm_buf), key_fmt, (unsigned int)p.cmd_clear_token_arm);
-    snprintf(fire_buf, sizeof(fire_buf), key_fmt, (unsigned int)p.cmd_clear_token_fire);
     
     snprintf(chunk_buf, sizeof(chunk_buf), "META,%d,%s,%s,%s,%s,%s\n", 
              target_slot, p.profile_name.c_str(), to_string(p.protocol), addr_buf, arm_buf, fire_buf);
