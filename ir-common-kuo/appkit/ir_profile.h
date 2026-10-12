@@ -29,6 +29,7 @@
 #define HID_REPORT_CONSUMER       1
 #define HID_REPORT_TOKEN_NONE     2
 #define HID_REPORT_SYSTEM_CONTROL 3
+#define HID_REPORT_COMBO_INPUT    4 // for raw key combos
 
 #define PROTO_UNKNOWN   0
 #define PROTO_NEC       1
@@ -223,7 +224,6 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
     // NATIVE FIXED CONSUMER APP SHORTCUTS (Unchanged)
     // Common to both projector architectures
     // ====================================================================
-    else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_CONSUMER; return 0x01BC; }
     else if (std::strcmp(name, "picture") == 0)      { out_type = HID_REPORT_CONSUMER; return 0x0223; }
     else if (std::strcmp(name, "shortcut_1") == 0)   { out_type = HID_REPORT_CONSUMER; return 0x021D; }
     else if (std::strcmp(name, "shortcut_2") == 0)   { out_type = HID_REPORT_CONSUMER; return 0x021F; }
@@ -244,7 +244,8 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
     else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_CONSUMER; return 0x00E9; }
     else if (std::strcmp(name, "volume_down") == 0)  { out_type = HID_REPORT_CONSUMER; return 0x00EA; }
     else if (std::strcmp(name, "mute") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x00E2; }
-
+    else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_COMBO_INPUT; return 0x2D40;} // Mod (0x2D), Keycode (0x40)
+  
 #else
 
     // PATHWAY B: STANDARD ANDROID TV TARGETS (e.g., Titan Noir)
@@ -255,6 +256,7 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
     else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_KEYBOARD; return 0x80; }
     else if (std::strcmp(name, "volume_down") == 0)  { out_type = HID_REPORT_KEYBOARD; return 0x81; }
     else if (std::strcmp(name, "mute") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x01BD; }
+    else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_CONSUMER; return 0x01BC; }
 
 #endif
 
@@ -547,7 +549,7 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
     if (true_hid_code == 0xFFFF && resolved_type != HID_REPORT_TOKEN_NONE) return;
 
     // Streamlined low-overhead driver execution pipeline
-    if (event_state == KEY_EVENT_DOWN) {
+    if (event_state == KEY_EVENT_DOWN || event_state == KEY_EVENT_HOLDING) {
         if (resolved_type == HID_REPORT_KEYBOARD) {
             esphome::id(xgimi_remote_controller).hold_keyboard((uint8_t)true_hid_code);
         }
@@ -555,20 +557,23 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
             esphome::id(xgimi_remote_controller).hold_consumer(true_hid_code);
         }
         else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
-            // 🛠️ FIXED: Routes safely through the driver layer to prevent length drops
             esphome::id(xgimi_remote_controller).press_system((uint8_t)true_hid_code);
         }
-    }
-    else if (event_state == KEY_EVENT_HOLDING) {
-        if (resolved_type == HID_REPORT_KEYBOARD) {
-            esphome::id(xgimi_remote_controller).hold_keyboard((uint8_t)true_hid_code);
-        }
-        else if (resolved_type == HID_REPORT_CONSUMER) {
-            esphome::id(xgimi_remote_controller).hold_consumer(true_hid_code);
-        }
-        else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
-            // System Control parameters don't use standard repeats; pass safely
-            esphome::id(xgimi_remote_controller).press_system((uint8_t)true_hid_code);
+        // ⚡ NEW ROUTING: Emulate the exact modified layout packet parameters 
+        else if (resolved_type == HID_REPORT_COMBO_INPUT) {
+            // Extract parameters out of our custom composite tracking token
+            uint8_t modifiers = (true_hid_code >> 8) & 0xFF;
+            uint8_t keycode   = true_hid_code & 0xFF;
+
+            // 1. Sequentially engage the active physical modifiers matching mask 0x2D
+            // (Left Ctrl: 0xE0, Left Alt: 0xE2, Left GUI: 0xE3, Right Ctrl: 0xE4)
+            if (modifiers & 0x01) esphome::id(xgimi_remote_controller).hold_keyboard(0xE0);
+            if (modifiers & 0x04) esphome::id(xgimi_remote_controller).hold_keyboard(0xE2);
+            if (modifiers & 0x08) esphome::id(xgimi_remote_controller).hold_keyboard(0xE3);
+            if (modifiers & 0x20) esphome::id(xgimi_remote_controller).hold_keyboard(0xE4);
+
+            // 2. Fire the destination structural payload character key (0x40 = F7)
+            esphome::id(xgimi_remote_controller).hold_keyboard(keycode);
         }
     }
     else if (event_state == KEY_EVENT_UP) {
@@ -581,6 +586,10 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
         }
         else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
             // The custom press_system wrapper handles its own structural cleanups automatically
+        }
+        // ⚡ NEW ROUTING: Symmetrically clear standard key arrays and modifiers
+        else if (resolved_type == HID_REPORT_COMBO_INPUT) {
+            esphome::id(xgimi_remote_controller).release_held_keyboard_();
         }
     }
 }

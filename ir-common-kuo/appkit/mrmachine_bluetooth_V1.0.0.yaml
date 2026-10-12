@@ -144,20 +144,32 @@ script:
     mode: single
     then: 
       - lambda: |-
-          // 1. Fire the initial DOWN packet immediately
-          fire_bluetooth_hid_action("power_off", 0); 
-
-          // 2. Dynamic compile-time hold delay
+          // 1. ABSOLUTE PRIORITY OVERRIDE: Check for generic power signatures first
           #ifdef ENABLE_GENERIC_POWER
-          // Generic discrete HID power commands need a quick, tap-like release
-          vTaskDelay(pdMS_TO_TICKS(50));
-          #else
-          // XGIMI hardware lines require a sustained long hold to acknowledge power down
-          vTaskDelay(pdMS_TO_TICKS(1500));
-          #endif
 
-          // 3. Fire the trailing UP packet safely
-          fire_bluetooth_hid_action("power_off", 2); 
+          // --- GENERIC POWER PATHWAY (HIGHEST PRIORITY OVERRIDE) ---
+          // Generic discrete HID power commands need a quick, short tap-like release
+          fire_bluetooth_hid_action("power_off", KEY_EVENT_DOWN); 
+          vTaskDelay(pdMS_TO_TICKS(50));
+          fire_bluetooth_hid_action("power_off", KEY_EVENT_UP); 
+
+          #elif defined(ENABLE_GOOGLETV_BLE_CODES)
+
+          // --- GOOGLE TV (e.g., Horizon 20) ---
+          // Step A: Fire standard power toggle
+          fire_bluetooth_hid_action("power_off", KEY_EVENT_DOWN); 
+          vTaskDelay(pdMS_TO_TICKS(50));
+          fire_bluetooth_hid_action("power_off", KEY_EVENT_UP); 
+
+          #else
+
+          // --- DEFAULT STANDARD ANDROID TV PATHWAYS (e.g., Titan Noir) ---
+          // XGIMI hardware lines require a sustained long hold to acknowledge power down
+          fire_bluetooth_hid_action("power_off", KEY_EVENT_DOWN); 
+          vTaskDelay(pdMS_TO_TICKS(1500));
+          fire_bluetooth_hid_action("power_off", KEY_EVENT_UP); 
+
+          #endif
           
       - delay: 200ms # Keep baseline pipeline stabilization window intact
 
