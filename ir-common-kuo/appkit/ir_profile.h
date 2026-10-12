@@ -91,9 +91,6 @@ inline bool flash_hydration_complete = false;
 // ====================================================================
 static const size_t MAX_ACTION_STRING_LEN = 16; // Perfectly fits up to 15 chars + null
 static const size_t MAX_BUTTON_NAME_LEN   = 32; // Provides roomy headroom for RKEY/RCON strings
-#define MAX_MACRO_STEPS    32  
-#define MAX_BOUND_HOTKEYS  9  
-#define CURRENT_MACRO_VERSION  8
 
 typedef char action_stringType[MAX_ACTION_STRING_LEN]; // Standardized short Xgimi Tokens
 typedef char button_nameType[MAX_BUTTON_NAME_LEN];     // Dynamic payload cell (RKEY/RCON data)
@@ -118,9 +115,9 @@ inline constexpr size_t TOTAL_SYSTEM_BUTTONS = sizeof(learn_button_names) / size
 // ====================================================================
 // Macro storage STRUCTS
 // ====================================================================
-#define MAX_MACRO_STEPS    32  
+#define MAX_MACRO_STEPS    64  
 #define MAX_BOUND_HOTKEYS  9  
-#define CURRENT_MACRO_VERSION  8
+#define CURRENT_MACRO_VERSION  9
 
 
 struct UniversalMacroStep {
@@ -244,7 +241,7 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
     else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_CONSUMER; return 0x00E9; }
     else if (std::strcmp(name, "volume_down") == 0)  { out_type = HID_REPORT_CONSUMER; return 0x00EA; }
     else if (std::strcmp(name, "mute") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x00E2; }
-    else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_KEYBOARD; return 0x0040; }
+    else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_COMBO_INPUT; return 0x2D40; }
   
 #else
 
@@ -559,21 +556,19 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
         else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
             esphome::id(xgimi_remote_controller).press_system((uint8_t)true_hid_code);
         }
-        // ⚡ NEW ROUTING: Emulate the exact modified layout packet parameters 
+        // Symmetrically honors the big-endian literal 0x2D40
         else if (resolved_type == HID_REPORT_COMBO_INPUT) {
-            // Extract parameters out of our custom composite tracking token
-            uint8_t modifiers = (true_hid_code >> 8) & 0xFF;
-            uint8_t keycode   = true_hid_code & 0xFF;
+            uint8_t modifiers = (true_hid_code >> 8) & 0xFF; // Extracts 0x2D
+            uint8_t keycode   = true_hid_code & 0xFF;        // Extracts 0x40
 
-            // 1. Sequentially engage the active physical modifiers matching mask 0x2D
-            // (Left Ctrl: 0xE0, Left Alt: 0xE2, Left GUI: 0xE3, Right Ctrl: 0xE4)
-            if (modifiers & 0x01) esphome::id(xgimi_remote_controller).hold_keyboard(0xE0);
-            if (modifiers & 0x04) esphome::id(xgimi_remote_controller).hold_keyboard(0xE2);
-            if (modifiers & 0x08) esphome::id(xgimi_remote_controller).hold_keyboard(0xE3);
-            if (modifiers & 0x20) esphome::id(xgimi_remote_controller).hold_keyboard(0xE4);
+            // Construct a raw 8-byte frame mirroring standard BLE HID report formats
+            uint8_t press_report[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+            
+            press_report[0] = modifiers; // Index 0: Modifiers (0x2D)
+            press_report[2] = keycode;   // Index 2: Main Key usage character (0x40)
 
-            // 2. Fire the destination structural payload character key (0x40 = F7)
-            esphome::id(xgimi_remote_controller).hold_keyboard(keycode);
+            // Direct pass-through injection right out into the public GATT stack pipeline
+            esphome::id(xgimi_remote_controller).notify_keyboard_(press_report);
         }
     }
     else if (event_state == KEY_EVENT_UP) {
@@ -587,10 +582,25 @@ inline void fire_bluetooth_hid_action(const char* action_name, int event_state) 
         else if (resolved_type == HID_REPORT_SYSTEM_CONTROL) {
             // The custom press_system wrapper handles its own structural cleanups automatically
         }
-        // ⚡ NEW ROUTING: Symmetrically clear standard key arrays and modifiers
+        // Step-by-step low-latency modifier roll-off
         else if (resolved_type == HID_REPORT_COMBO_INPUT) {
+            uint8_t modifiers = (true_hid_code >> 8) & 0xFF;
+
+            // Step 1: Release only the target character key (0x40) 
+            // Keep the modifiers engaged while clearing the key register code
+            uint8_t mid_report[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+            mid_report[0] = modifiers; 
+            
+            // ⚡ Pushes your custom mid_report array straight to the Bluetooth stack!
+            esphome::id(xgimi_remote_controller).notify_keyboard_(mid_report); 
+
+            // Step 2: Micro-delay window to let the projector digest the key liftoff
+            vTaskDelay(pdMS_TO_TICKS(10)); 
+
+            // Step 3: Now cleanly release the remaining modifier layout masks entirely
             esphome::id(xgimi_remote_controller).release_held_keyboard_();
         }
+
     }
 }
 
