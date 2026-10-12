@@ -114,7 +114,7 @@ esphome:
   comment: ESP32 with XGIMI BLE Translator
   project:
     name: xgimi.titan-noir-esp32-ir-kuo
-    version: 26.10.11.1657
+    version: 26.10.11.2008
     
   includes:
     - <sstream>
@@ -131,7 +131,7 @@ esphome:
     
     # Uncomment line(s) below to activate special options. Beware indentation alighnment when uncommenting.
 
-    - '-DENABLE_GOOGLETV_BLE_CODES' # for Xgimi Horizon 20 and other GoogleTV projectors. (differs from Xgimi TNM whhic is AndroidTV)
+    #- '-DENABLE_GOOGLETV_BLE_CODES' # for Xgimi Horizon 20 and other GoogleTV projectors. (differs from Xgimi TNM whhic is AndroidTV)
 
     #- '-DENABLE_GENERIC_POWER'      # use simple power on/off instead of Xgimi specific power sequences
 
