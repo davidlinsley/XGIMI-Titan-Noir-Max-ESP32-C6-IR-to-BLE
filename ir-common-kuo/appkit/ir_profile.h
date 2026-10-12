@@ -29,7 +29,7 @@
 #define HID_REPORT_CONSUMER       1
 #define HID_REPORT_TOKEN_NONE     2
 #define HID_REPORT_SYSTEM_CONTROL 3
-#define HID_REPORT_COMBO_INPUT    4 // for raw key combos
+#define HID_REPORT_COMBO_INPUT    4 // for keyboard with modifier
 
 #define PROTO_UNKNOWN   0
 #define PROTO_NEC       1
@@ -316,10 +316,20 @@ inline const char* decode_idx_to_action_string(uint16_t action_idx) {
 inline bool is_action_allowed_as_macro_hotkey(const char* action_name) {
     if (action_name == nullptr) return false;
 
-
-    // Hard Guard: Block utility actions from carrying macros to prevent infinite loops
+    // ====================================================================
+    // ABSOLUTE AUTOMATION RECURSION, POWER, & FLASH SAFETY GUARDS
+    // Prohibit infrastructure utility triggers from entering macros to prevent
+    // infinite execution loops, unintended shutdowns, and flash erasure loops.
+    // ====================================================================
     if (std::strcmp(action_name, "macro_record") == 0 || 
-        std::strcmp(action_name, "macro_play") == 0) {
+        std::strcmp(action_name, "macro_play") == 0    ||
+        std::strcmp(action_name, "power_on") == 0      || // Block system wake bursts from automation paths
+        std::strcmp(action_name, "power_off") == 0     || // Block premature projector power downs
+        std::strcmp(action_name, "token_clear") == 0   || // Block structural safety lock/wipe scripts
+        std::strcmp(action_name, "token_sniff") == 0   || // Block active GATT sniffer loops
+        std::strcmp(action_name, "token_recall") == 0) {   // Block diagnostic OSD takeovers
+        
+        ESP_LOGW("MACRO_ENGINE", "Safety Intercept: Prohibited action string '%s' blocked from macro registry.", action_name);
         return false;
     }
     return true;
@@ -2528,29 +2538,37 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
             if (httpd_query_key_value(query_buf, "action", action_param, sizeof(action_param)) == ESP_OK) {
                 ESP_LOGI("WEB_CONSOLE", "Web Console Intercept: Firing Action Token '%s'", action_param);
                 
-                bool is_prefix_listening = esphome::id(macro_play_prefix_active).value();
-                uint32_t workflow_state = esphome::id(macro_workflow_state).value();
-                
+                // ====================================================================
+                // CENTRALIZED STATE ENGINE ROUTER (UNIFIED IR PATHWAY)
+                // Routes all macros, safety verification gates, and token actions
+                // straight into the low-level IR machine engine for identical processing.
+                // ====================================================================
+                bool is_prefix_listening  = esphome::id(macro_play_prefix_active).value();
+                uint32_t workflow_state   = esphome::id(macro_workflow_state).value();
+                bool is_token_clear_armed = esphome::id(global_token_clear_armed).value(); 
+
                 bool route_to_state_machine = is_prefix_listening || 
+                                              is_token_clear_armed ||
                                               (workflow_state == MACRO_STATE_RECORDING) || 
-                                              (workflow_state == MACRO_STATE_AWAITING_HOTKEY);
+                                              (workflow_state == MACRO_STATE_AWAITING_HOTKEY) ||
+                                              (std::strcmp(action_param, "token_clear") == 0) ||
+                                              (std::strcmp(action_param, "token_sniff") == 0) || // Centralized 
+                                              (std::strcmp(action_param, "token_recall") == 0) || // Centralized
+                                              (std::strcmp(action_param, "macro_play") == 0) ||
+                                              (std::strcmp(action_param, "macro_record") == 0);
 
                 if (route_to_state_machine) {
-                    // Route inbound web clicks directly as KEY_EVENT_DOWN actions to the state engine 
-                    // when an automation session is actively listening for payload keys or binding assignments.
-                    uint32_t current_hex_mapping = find_active_command_by_name(action_param);
-                    esphome::id(ir_map_processor).execute(current_hex_mapping, KEY_EVENT_DOWN); // 0 = DOWN / Edge Press
+                    ESP_LOGD("WEB_CONSOLE", "Routing web action '%s' down central IR machine pipeline.", action_param);
                     
-                    // ====================================================================
-                    // NEW CORRECTION: ANTI-LOCKUP WEB CLEARING GATE (C++ TYPED EDITION)
-                    // If the macro engine just finished assigning a button via the web console,
-                    // it will land in state 99 waiting for a physical button release.
-                    // We forcibly break out back to IDLE via .value() to ensure immediate availability.
-                    // ====================================================================
+                    // Look up the simulated hex key map entry matching your active workspace profile
+                    uint32_t current_hex_mapping = find_active_command_by_name(action_param);
+                    
+                    // Direct pass-through execution into your core physical remote processing sequence
+                    esphome::id(ir_map_processor).execute(current_hex_mapping, KEY_EVENT_DOWN);
+                    
+                    // Safety liftoff guard to prevent automated configuration browser lockups
                     if (esphome::id(macro_workflow_state).value() == MACRO_STATE_LIFTOFF_SHIELD) {
-                        ESP_LOGI("WEB_CONSOLE", "Web assignment completed. Safely releasing software execution lock states.");
                         esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE;
-                        
                         esphome::id(global_cached_command).value() = 0;
                         esphome::id(global_initial_press_time).value() = 0;
                         esphome::id(global_last_processed_time).value() = 0;
@@ -2562,7 +2580,7 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                     return ESP_OK;
                 }
 
-                // Update physical screen details to log the incoming command transaction
+                // Update physical screen details to log standard incoming command transitions
                 std::string resolved_display_str = std::string(action_param); 
                 for (const auto& kv_pair : active_profile_workspace.cmd_codes) {
                     if (std::strcmp(kv_pair.second.action_string, action_param) == 0) {
@@ -2574,34 +2592,11 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                 esphome::id(display_show).execute(false, resolved_display_str, active_profile_workspace.profile_name, "BLE Web Command");
 
                 // ====================================================================
-                // AUTOMATION STATE ENGINES REDIRECT ROUTINES
-                // ====================================================================
-                if (std::strcmp(action_param, "macro_play") == 0) {
-                    ESP_LOGI("WEB_CONSOLE", "Web Redirect: Engaging Macro Playback Sequence Tracker");
-                    uint32_t simulated_hex = find_active_command_by_name("macro_play");
-                    esphome::id(ir_map_processor).execute(simulated_hex, KEY_EVENT_DOWN); // 0 = DOWN (Opens prefix window)
-                    
-                    httpd_resp_set_status(req, "204 No Content");
-                    httpd_resp_send(req, NULL, 0);
-                    return ESP_OK;
-                }
-                else if (std::strcmp(action_param, "macro_record") == 0) {
-                    ESP_LOGI("WEB_CONSOLE", "Web Redirect: Toggling Macro Recording State Machine");
-                    uint32_t simulated_hex = find_active_command_by_name("macro_record");
-                    esphome::id(ir_map_processor).execute(simulated_hex, KEY_EVENT_DOWN); // 0 = DOWN (Starts or steps to assignment)
-                    
-                    httpd_resp_set_status(req, "204 No Content");
-                    httpd_resp_send(req, NULL, 0);
-                    return ESP_OK;
-                }
-
-
-                // ====================================================================
-                // WEB BUTTON BLUETOOTH TOKEN & BOND DIAGNOSTIC INTERCEPT LAYER
+                // HARDWARE-LEVEL BLUETOOTH PAIRING & BOND RECOVERY CONTROLS
                 // ====================================================================
                 if (std::strcmp(action_param, "ble_pair") == 0) {
                     ESP_LOGW("WEB_CONSOLE", "Web Intercept: Starting bluetooth pairing!");
-                    esphome::id(xgimi_remote_controller).start_pairing_mode(); // Calls native C++ component purge
+                    esphome::id(xgimi_remote_controller).start_pairing_mode(); 
                     
                     httpd_resp_set_status(req, "204 No Content");
                     httpd_resp_send(req, NULL, 0);
@@ -2609,33 +2604,7 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                 }
                 if (std::strcmp(action_param, "ble_clear") == 0) {
                     ESP_LOGW("WEB_CONSOLE", "Web Intercept: Purging all saved Bluetooth bonds!");
-                    esphome::id(xgimi_remote_controller).clear_bonds(); // Calls native C++ component purge
-                    
-                    httpd_resp_set_status(req, "204 No Content");
-                    httpd_resp_send(req, NULL, 0);
-                    return ESP_OK;
-                }
-                else if (std::strcmp(action_param, "token_sniff") == 0) {
-                    ESP_LOGI("WEB_CONSOLE", "Web Intercept: Arming Token Sniffer Stack");
-                    esphome::id(showing_special_info).value() = true; // Lock display text protection
-                    esphome::id(sniffing_sequence).execute(); 
-                    
-                    httpd_resp_set_status(req, "204 No Content");
-                    httpd_resp_send(req, NULL, 0);
-                    return ESP_OK;
-                } 
-                else if (std::strcmp(action_param, "token_recall") == 0) {
-                    ESP_LOGI("WEB_CONSOLE", "Web Intercept: Executing Wake Token Recall");
-                    esphome::id(showing_special_info).value() = true; // Lock display text protection
-                    esphome::id(execute_token_recall_routine).execute();
-                    
-                    httpd_resp_set_status(req, "204 No Content");
-                    httpd_resp_send(req, NULL, 0);
-                    return ESP_OK;
-                } 
-                else if (std::strcmp(action_param, "token_clear") == 0) {
-                    ESP_LOGI("WEB_CONSOLE", "Web Intercept: Initiating Wake Token Wipe");
-                    esphome::id(run_token_clear_worker).execute();
+                    esphome::id(xgimi_remote_controller).clear_bonds(); 
                     
                     httpd_resp_set_status(req, "204 No Content");
                     httpd_resp_send(req, NULL, 0);
@@ -2643,7 +2612,7 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                 }
 
                 // ====================================================================
-                // MONOSTABLE PROGRAMMATIC ACTIONS INTERCEPT GATE
+                // MONOSTABLE PROGRAMMATIC HARDWARE TOGGLE INTERCEPT GATE
                 // ====================================================================
                 bool is_monostable_web_key = (std::strcmp(action_param, "power_off") == 0 || 
                                               std::strcmp(action_param, "focus_manual") == 0 ||
@@ -2656,7 +2625,6 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                         target_btn->press(); 
                         ESP_LOGI("WEB_CONSOLE", "Web redirected straight to native programmatic button for: %s", action_param);
                     } else {
-                        // Fallback handling if native platform component entity reference is missing
                         fire_bluetooth_hid_action(action_param, KEY_EVENT_DOWN);
                     }
                     
@@ -2671,25 +2639,16 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                 if (std::strcmp(action_param, "power_off") != 0 && 
                     std::strcmp(action_param, "focus_manual") != 0 && 
                     std::strcmp(action_param, "focus_auto") != 0 &&
-                    std::strcmp(action_param, "power_on") != 0 &&
-                    std::strcmp(action_param, "macro_play") != 0 &&
-                    std::strcmp(action_param, "macro_record") != 0) {
+                    std::strcmp(action_param, "power_on") != 0) {
                     
-                    // 1. Refresh global timing anchors so the 35ms flusher loop doesn't step on our web press
                     uint32_t simulated_hex = find_active_command_by_name(action_param);
                     esphome::id(global_last_raw_packet_time).value() = millis();
                     esphome::id(global_cached_command).value() = simulated_hex;
                 
-                    // 2. Fire physical press edge down to BLE driver layers
-                    fire_bluetooth_hid_action(action_param, KEY_EVENT_DOWN); // 0 = DOWN / Press edge
-                    
-                    // 3. Keep delay safely under your 35ms cycle floor to prevent race condition overlaps
+                    fire_bluetooth_hid_action(action_param, KEY_EVENT_DOWN); 
                     vTaskDelay(pdMS_TO_TICKS(25));              
-                    
-                    // 4. Cleanly execute release sequences symmetrically
-                    fire_bluetooth_hid_action(action_param, KEY_EVENT_UP); // 2 = UP / Release edge
+                    fire_bluetooth_hid_action(action_param, KEY_EVENT_UP); 
                 
-                    // 5. Explicitly clear state registers instantly to sync with the flusher expectation
                     esphome::id(global_cached_command).value() = 0;
                     esphome::id(global_initial_press_time).value() = 0;
                     esphome::id(global_last_processed_time).value() = 0;
@@ -2702,7 +2661,6 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
-
 //===================================
 
 

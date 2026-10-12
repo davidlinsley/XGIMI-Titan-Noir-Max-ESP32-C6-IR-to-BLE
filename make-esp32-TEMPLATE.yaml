@@ -114,7 +114,7 @@ esphome:
   comment: ESP32 with XGIMI BLE Translator
   project:
     name: xgimi.titan-noir-esp32-ir-kuo
-    version: 26.10.11.2225
+    version: 26.10.12.0823
     
   includes:
     - <sstream>

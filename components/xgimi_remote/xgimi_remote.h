@@ -56,12 +56,13 @@ class XgimiRemote : public Component {
   void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if,
                            esp_ble_gatts_cb_param_t *param);
 
+  void notify_keyboard_(const uint8_t data[8]);
+  void notify_consumer_(const uint8_t data[6]);
+
  protected:
   void set_advertised_name_(const char *name);
   bool matches_peer_(const esp_bd_addr_t address) const;
   void restore_hid_subscriptions_();
-  void notify_keyboard_(const uint8_t data[8]);
-  void notify_consumer_(const uint8_t data[6]);
 
   esp32_ble::ESP32BLE *ble_{nullptr};
   esp32_ble_server::BLEServer *server_{nullptr};

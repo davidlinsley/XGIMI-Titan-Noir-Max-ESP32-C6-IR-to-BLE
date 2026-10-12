@@ -1479,32 +1479,39 @@ script:
                 current_loop_idx += 1;
               }
           
-              if (match_idx == -1 && global_binding_registry.total_bound_keys != MAX_BOUND_HOTKEYS) {
+              // --- STRICT BOUNDS CAPACITY VERIFICATION FLOOR ---
+              if (match_idx == -1 && global_binding_registry.total_bound_keys < MAX_BOUND_HOTKEYS) {
                 match_idx = (int)global_binding_registry.total_bound_keys;
                 global_binding_registry.total_bound_keys += 1;
               }
-          
-              if (match_idx != -1) {
-                std::memset(global_binding_registry.bindings[match_idx].action_string, 0, MAX_ACTION_STRING_LEN);
-                std::strncpy(global_binding_registry.bindings[match_idx].action_string, key_name, MAX_ACTION_STRING_LEN - 1);
-                global_binding_registry.bindings[match_idx].action_string[MAX_ACTION_STRING_LEN - 1] = '\0';
-                global_binding_registry.bindings[match_idx].shared_macro_slot = target_shared_slot;
-                
-                id(commit_macro_to_flash_slot).execute(target_shared_slot);
-                id(save_binding_registry_to_nvs).execute();
-          
+              
+              if (match_idx == -1) {
+                ESP_LOGE("MACRO_WORKFLOW", "Registry overflow! Absolute memory ceiling of %d hotkeys reached.", MAX_BOUND_HOTKEYS);
                 id(macro_indicator_end)->execute();
-          
-                char slot_msg_buf[32];
-                char key_msg_buf[48];
-                snprintf(slot_msg_buf, sizeof(slot_msg_buf), "Macro Bound Slot %d", target_shared_slot);
-                snprintf(key_msg_buf, sizeof(key_msg_buf), "Key: %s", key_name);
-          
-                id(showing_special_info) = true;
-                id(display_show)->execute(true, std::string(slot_msg_buf), std::string(key_msg_buf), "Action Mode");
-                
-                ESP_LOGW("MACRO_WORKFLOW", "Macro sequence committed to Fixed NVS Slot %d for button: %s", target_shared_slot, key_name);
+                id(macro_workflow_state) = MACRO_STATE_IDLE;
+                return;
               }
+                        
+              std::memset(global_binding_registry.bindings[match_idx].action_string, 0, MAX_ACTION_STRING_LEN);
+              std::strncpy(global_binding_registry.bindings[match_idx].action_string, key_name, MAX_ACTION_STRING_LEN - 1);
+              global_binding_registry.bindings[match_idx].action_string[MAX_ACTION_STRING_LEN - 1] = '\0';
+              global_binding_registry.bindings[match_idx].shared_macro_slot = target_shared_slot;
+              
+              id(commit_macro_to_flash_slot).execute(target_shared_slot);
+              id(save_binding_registry_to_nvs).execute();
+        
+              id(macro_indicator_end)->execute();
+        
+              char slot_msg_buf[32];
+              char key_msg_buf[48];
+              snprintf(slot_msg_buf, sizeof(slot_msg_buf), "Macro Bound Slot %d", target_shared_slot);
+              snprintf(key_msg_buf, sizeof(key_msg_buf), "Key: %s", key_name);
+        
+              id(showing_special_info) = true;
+              id(display_show)->execute(true, std::string(slot_msg_buf), std::string(key_msg_buf), "Action Mode");
+              
+              ESP_LOGW("MACRO_WORKFLOW", "Macro sequence committed to Fixed NVS Slot %d for button: %s", target_shared_slot, key_name);
+
               id(macro_workflow_state) = MACRO_STATE_LIFTOFF_SHIELD; 
               return; 
             }
@@ -1617,63 +1624,64 @@ script:
           if (id(macro_workflow_state) == MACRO_STATE_RECORDING) {
             id(macro_record_timeout_watcher)->execute(); // Keep session alive
             
-            if (std::strcmp(found_cmd->action_string, "macro_play") != 0 && 
-                std::strcmp(found_cmd->action_string, "macro_record") != 0) {
+            // --- CORRECTION: USE THE CENTRAL PROHIBITED REGISTRY SAFETY CHECK ---
+            if (!is_action_allowed_as_macro_hotkey(found_cmd->action_string)) {
+              // We return instantly if the user presses an infrastructure or utility key
+              return; 
+            }
 
-              int step_idx = id(macro_step_counter);
+            int step_idx = id(macro_step_counter);
 
-              // Swallow holding noise frames; our timing engine targets clean state edges exclusively
-              if (event_state != KEY_EVENT_HOLDING && step_idx < MAX_MACRO_STEPS) {
-                
-                // Defensive structural guard against contact bounce noise
-                if (event_state == KEY_EVENT_UP && step_idx > 0 && 
-                    active_recording_buffer.steps[step_idx - 1].event_state == KEY_EVENT_UP &&
-                    (now - id(macro_last_event_time) < 45)) {
-                  return;
-                }
-
-                uint32_t delta = 0;
-                if (step_idx > 0) {
-                  if (event_state == KEY_EVENT_UP) {
-                    // --- BRANCH 1: SPECIAL CONSTRAINT TARGET (POWER_OFF OVERRIDE) ---
-                    if (std::strcmp(found_cmd->action_string, "power_off") == 0) {
-                      delta = 1500; 
-                      ESP_LOGD("MACRO_REC", "Special Case Applied: Clamped 'power_off' hold to 1500ms");
-                    } else {
-                      // --- BRANCH 2: SMART ADAPTIVE AUTOCORRECT FILTER ---
-                      uint32_t true_hold = now - id(macro_last_event_time);
-                      if (true_hold < 450) {
-                        delta = 50; // Clean up tired or accidental sluggish holds back into a standard tap
-                        ESP_LOGD("MACRO_REC", "Cleanup Filter Active: Normalized %ums hold down to 50ms tap", (unsigned int)true_hold);
-                      } else {
-                        delta = true_hold; // Intentional, sustained physical long-press duration cached
-                      }
-                    }
-                  } else {
-                    // Calculate human pacing interval gap between distinct button selections
-                    delta = now - id(macro_last_event_time);
-                    if (delta < 200) delta = 200; // Protect spacing gap minimum threshold floor
-                  }
-                  if (delta > 65535) delta = 65535;
-                }
-
-                std::memset(active_recording_buffer.steps[step_idx].action_string, 0, MAX_ACTION_STRING_LEN);
-                std::strncpy(active_recording_buffer.steps[step_idx].action_string, found_cmd->action_string, MAX_ACTION_STRING_LEN - 1);
-                
-                active_recording_buffer.steps[step_idx].event_state = (uint8_t)event_state;
-                active_recording_buffer.steps[step_idx].delay_ms = (uint16_t)delta;
-                
-                id(macro_last_event_time) = now;
-                id(macro_step_counter) = step_idx + 1;
-                active_recording_buffer.total_steps = id(macro_step_counter);
-                
-                ESP_LOGI("MACRO_REC", "Inline Mirror Captured -> Step [%d]: %s (State: %d, Delay: %u ms)", 
-                         step_idx, found_cmd->action_string, event_state, (unsigned int)delta);
+            // Swallow holding noise frames; our timing engine targets clean state edges exclusively
+            if (event_state != KEY_EVENT_HOLDING && step_idx < MAX_MACRO_STEPS) {
+              
+              // Defensive structural guard against contact bounce noise
+              if (event_state == KEY_EVENT_UP && step_idx > 0 && 
+                  active_recording_buffer.steps[step_idx - 1].event_state == KEY_EVENT_UP &&
+                  (now - id(macro_last_event_time) < 45)) {
+                return;
               }
+
+              uint32_t delta = 0;
+              if (step_idx > 0) {
+                if (event_state == KEY_EVENT_UP) {
+                  // --- BRANCH 1: SPECIAL CONSTRAINT TARGET (POWER_OFF OVERRIDE) ---
+                  if (std::strcmp(found_cmd->action_string, "power_off") == 0) {
+                    delta = 1500; 
+                    ESP_LOGD("MACRO_REC", "Special Case Applied: Clamped 'power_off' hold to 1500ms");
+                  } else {
+                    // --- BRANCH 2: SMART ADAPTIVE AUTOCORRECT FILTER ---
+                    uint32_t true_hold = now - id(macro_last_event_time);
+                    if (true_hold < 450) {
+                      delta = 50; // Clean up tired or accidental sluggish holds back into a standard tap
+                      ESP_LOGD("MACRO_REC", "Cleanup Filter Active: Normalized %ums hold down to 50ms tap", (unsigned int)true_hold);
+                    } else {
+                      delta = true_hold; // Intentional, sustained physical long-press duration cached
+                    }
+                  }
+                } else {
+                  // Calculate human pacing interval gap between distinct button selections
+                  delta = now - id(macro_last_event_time);
+                  if (delta < 200) delta = 200; // Protect spacing gap minimum threshold floor
+                }
+                if (delta > 65535) delta = 65535;
+              }
+
+              std::memset(active_recording_buffer.steps[step_idx].action_string, 0, MAX_ACTION_STRING_LEN);
+              std::strncpy(active_recording_buffer.steps[step_idx].action_string, found_cmd->action_string, MAX_ACTION_STRING_LEN - 1);
+              
+              active_recording_buffer.steps[step_idx].event_state = (uint8_t)event_state;
+              active_recording_buffer.steps[step_idx].delay_ms = (uint16_t)delta;
+              
+              id(macro_last_event_time) = now;
+              id(macro_step_counter) = step_idx + 1;
+              active_recording_buffer.total_steps = id(macro_step_counter);
+              
+              ESP_LOGI("MACRO_REC", "Inline Mirror Captured -> Step [%d]: %s (State: %d, Delay: %u ms)", 
+                       step_idx, found_cmd->action_string, event_state, (unsigned int)delta);
             }
             // Control safely flows straight into the system output and driver components down below...
           }
-
           // ============================================================
           // POPULATE DYNAMIC TRACKING SENSOR STRINGS
           // ============================================================
@@ -1750,12 +1758,61 @@ script:
             }
             return;
           } 
+          
+          // ============================================================
+          // ARMED PROTECTION GUARD: ROGUE KEY INTERCEPT CANCEL
+          // ============================================================
+          if (id(global_token_clear_armed)) {
+            // If the system is armed, ANY key that is not the confirmation key cancels the operation
+            if (std::strcmp(found_cmd->action_string, "cursor_enter") != 0) {
+              if (event_state == KEY_EVENT_DOWN) {
+                id(token_clear_safety_timeout)->stop(); // Kill the active watchdog timer execution
+                id(global_token_clear_armed) = false;   // Disarm safety state latch registers immediately
+                
+                // Reset screen UI state to drop the prompt safely
+                id(showing_special_info) = false;
+                id(display_show)->execute(false, "Wipe Aborted", "Safety Disarmed", active_profile_workspace.profile_name);
+                ESP_LOGW("IR Safety", "Rogue action '%s' pressed while armed! Safety gate canceled.", found_cmd->action_string);
+              }
+              return; // Swallow the rogue key completely so it doesn't execute out to BLE or other engines
+            }
+          }
+
+          // ============================================================
+          // ARMED REGISTRATION: ARM THE ENGINE VIA UTILITY BUTTON
+          // ============================================================
           else if (std::strcmp(found_cmd->action_string, "token_clear") == 0) {
             if (event_state == KEY_EVENT_DOWN) {
-              id(run_token_clear_worker).execute();
+              // --- STAGE 1: ARM THE ENGINE ---
+              id(global_token_clear_armed) = true;
+              
+              // Fire up the 15-second automatic timeout watchdog countdown script
+              id(token_clear_safety_timeout).execute(); 
+              
+              // Update screen buffer states to reflect the armed lock status cleanly
+              id(showing_special_info) = true;
+              id(display_show)->execute(false, "Token Clear", "Press OK (Enter)", "To Confirm...");
+              ESP_LOGW("IR Safety", "Wake token wipe requested. Safety gate armed! Awaiting OK confirmation click...");
             }
             return;
           }
+
+          // ============================================================
+          // ARMED HANDSHAKE ENGINE: OK/ENTER CONFIRMATION INTERCEPT
+          // ============================================================
+          if (std::strcmp(found_cmd->action_string, "cursor_enter") == 0 && id(global_token_clear_armed)) {
+            if (event_state == KEY_EVENT_DOWN) {
+              id(token_clear_safety_timeout)->stop(); // Kill the active watchdog timer
+              id(global_token_clear_armed) = false;   // Disarm safety state latch registers
+              
+              id(showing_special_info) = true;
+              id(run_token_clear_worker).execute();   // Securely commit deletion pass to flash slots
+              ESP_LOGE("IR Safety", "Safety handshake verified via OK button. Persistent wake token cache wiped successfully.");
+            }
+            return; // Swallow the click so it does not fire a normal BLE enter keystroke to your device
+          }
+
+          // ============================================================
 
           if (id(global_cached_command) != ir_command) {
             if (event_state == KEY_EVENT_DOWN) {
@@ -1782,7 +1839,7 @@ script:
           
           id(macro_assignment_cooldown) = now;
           
-  # ========== END of ir_map_processor ===================================
+  # ====================== END of ir_map_processor =======================
   # ======================================================================
 
 
@@ -1829,25 +1886,28 @@ script:
           id: debounce_safety_lock
           value: 'false'
 
-  # Automated 5-Second Expiration Timer
+  # =================================================================
+  # Automated 15-Second Expiration Timer for Clear Token Armed
   - id: token_clear_safety_timeout
     mode: restart
     then:
-      - delay: 5s
-      - if:
-          condition:
-            lambda: 'return id(global_token_clear_armed);'
-          then:
-            - globals.set:
-                id: global_token_clear_armed
-                value: 'false'
-            - lambda: |-
-                ESP_LOGI("IR Safety", "Sequence timed out. Gate locked.");
-                id(myDisplay_line1) = "Timed Out";
-                id(myDisplay_line2) = "Clear Token";
-                id(myDisplay_line3) = "Canceled";
+      - delay: 15s
+      - lambda: |-
+          // Check if the system is still armed before executing a passive timeout cleanup
+          if (id(global_token_clear_armed)) {
+            id(global_token_clear_armed) = false;
+            id(showing_special_info) = false;
+            
+            ESP_LOGW("IR Safety", "Safety handshake window expired. Automatic disarm sequence engaged.");
+            
+            // Revert display back to standard runtime view seamlessly 
+            id(display_show)->execute(false,
+                                      "Wipe Timeout", 
+                                      "Safety Disarmed", 
+                                      active_profile_workspace.profile_name);
+          }
 
-
+  # =================================================================
   # Showing special info expiration timer
   - id: showing_special_expiration_timer
     mode: restart
@@ -1857,7 +1917,7 @@ script:
                 ESP_LOGD("Info Show", "Showing special info timed out.");
                 id(showing_special_info) = false;
 
-
+  # =================================================================
   - id: set_profile_timeout_watcher
     mode: restart
     then:

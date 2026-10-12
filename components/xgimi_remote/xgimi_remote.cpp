@@ -12,7 +12,6 @@
 namespace esphome::xgimi_remote {
 
 static const char *const TAG = "xgimi_remote";
-static const char *const WAKE_NAME = "ESP32 xgimi remote";
 static constexpr uint16_t IMMEDIATE_POWER_OFF_HOLD_MS = 1500;
 
 void XgimiRemote::setup() {
@@ -98,7 +97,7 @@ void XgimiRemote::start_wake_burst() {
     ESP_LOGI(TAG, "Projector Power On ignored: wake burst is already in progress");
     return;
   }
-  this->set_advertised_name_(WAKE_NAME);
+  this->set_advertised_name_(this->remote_name_.c_str());
   this->wake_counter_ = 0;
   this->wake_active_ = true;
   ESP_LOGI(TAG, "Starting XGIMI wake burst with no deliberate inter-value delay");
