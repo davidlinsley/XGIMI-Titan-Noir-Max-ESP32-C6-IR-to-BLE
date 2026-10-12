@@ -595,6 +595,9 @@ Diagram of button sequence and LED flashes. You can interpet the flashes as happ
 Turn on your projector with its original remote control. Within settings add your new IR translator as another Bluetooth remote.
 <br><br>
 Keep the original remote paired as well.
+Your IR remote should now be able to control Xgimi Titan Noir. You should see IR commands accepted on the ESP32 display and corresponding action happen on projector. If projector is not accepting the commands, try forgetting ESP32 from projector bluetooth device list and re-add the ESP32. 
+
+On one occasion, I have seen an XTNM refuse to accept any bluetooth commands from translator until after the projector was powered down once and turned back on via the EPS32 translator. Thereafter, it acted normally and accepted bluetooth commands from ESP32.
 <br>
 <br>
 
