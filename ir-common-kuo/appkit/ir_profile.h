@@ -321,8 +321,10 @@ inline bool is_action_allowed_as_macro_hotkey(const char* action_name) {
     // Prohibit infrastructure utility triggers from entering macros to prevent
     // infinite execution loops, unintended shutdowns, and flash erasure loops.
     // ====================================================================
-    if (std::strcmp(action_name, "macro_record") == 0 || 
+    if (std::strcmp(action_name, "macro_record") == 0  || 
         std::strcmp(action_name, "macro_play") == 0    ||
+        std::strcmp(action_name, "ble_clear") == 0     ||
+        std::strcmp(action_name, "ble_pair") == 0      ||
         std::strcmp(action_name, "power_on") == 0      || // Block system wake bursts from automation paths
         std::strcmp(action_name, "power_off") == 0     || // Block premature projector power downs
         std::strcmp(action_name, "token_clear") == 0   || // Block structural safety lock/wipe scripts
