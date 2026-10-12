@@ -244,7 +244,7 @@ inline uint16_t resolve_action_to_true_hid(const char* name, uint8_t& out_type) 
     else if (std::strcmp(name, "volume_up") == 0)    { out_type = HID_REPORT_CONSUMER; return 0x00E9; }
     else if (std::strcmp(name, "volume_down") == 0)  { out_type = HID_REPORT_CONSUMER; return 0x00EA; }
     else if (std::strcmp(name, "mute") == 0)         { out_type = HID_REPORT_CONSUMER; return 0x00E2; }
-    else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_COMBO_INPUT; return 0x2D40;} // Mod (0x2D), Keycode (0x40)
+    else if (std::strcmp(name, "input") == 0)        { out_type = HID_REPORT_KEYBOARD; return 0x0040; }
   
 #else
 
