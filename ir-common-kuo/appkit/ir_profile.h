@@ -2041,9 +2041,11 @@ inline esp_err_t root_handler(httpd_req_t *req) {
   .btn-test.focus { background: #41562d; border: 1px solid #30363d; color: #c9d1d9; }
   .btn-test.focus:active { background: #50663d; }
   .btn-test.dmenu { background: #76752D; border: 1px solid #30363d; color: #c9d1d9; }
-  .btn-test.dmenu:active { background: #76752D; }
+  .btn-test.dmenu:active { background: #96752D; }
   .btn-test.macro { background: #473666; border: 1px solid #30363d; color: #c9d1d9; }
   .btn-test.macro:active { background: #5B4683; }
+  .btn-test.ble { background: #9D5352; border: 1px solid #30363d; color: #c9d1d9; }
+  .btn-test.ble:active { background: #BD6352; }
   .btn-test.span-2 { grid-column: span 2; }
 
   /* Mobile Responsive Fallback (Flips to 2 columns on small mobile devices) */
@@ -2213,13 +2215,13 @@ inline esp_err_t root_handler(httpd_req_t *req) {
     <button class="btn-test macro" onclick="sendClick('macro_record')">Macro RECORD</button>
     <button class="btn-test macro" onclick="sendClick('macro_play')">Macro PLAY</button>
     <button class="btn-test util" style="visibility:hidden;"></button>
-    <button class="btn-test util" style="background:#9D5352;" onclick="sendClick('ble_pair')">BLE PAIR</button>
+    <button class="btn-test ble" onclick="sendClick('ble_pair')">BLE PAIR</button>
     
     <!-- Row 8: Bluetooth Token Diagnostic Layer -->
     <button class="btn-test util" onclick="sendClick('token_sniff')">Token SNIFF</button>
-    <button class="btn-test util" onclick="sendClick('token_recall')">Token RECALL</button>
     <button class="btn-test util" onclick="sendClick('token_clear')">Token CLEAR</button>
-    <button class="btn-test util" style="background:#BD6352;" onclick="sendClick('ble_clear')">BLE CLEAR</button>
+    <button class="btn-test util" onclick="sendClick('token_recall')">Token RECALL</button>
+    <button class="btn-test ble"  onclick="sendClick('ble_clear')">BLE CLEAR</button>
 Use  </div>
 </div>
 )rawliteral", HTTPD_RESP_USE_STRLEN); // <-- This safely closes Chunk 2
