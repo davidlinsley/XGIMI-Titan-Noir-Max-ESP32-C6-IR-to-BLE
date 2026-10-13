@@ -262,7 +262,7 @@ globals:
     initial_value: '0'
     restore_value: yes
     
-  - id: active_remote_layout
+  - id: active_remote_profile
     type: int
     initial_value: ${def_profile}
     restore_value: yes
@@ -894,7 +894,7 @@ script:
           esphome::global_preferences->sync();
 
           // Reset selection layout tracking parameters to your safe factory default
-          id(active_remote_layout) = id(default_profile); 
+          id(active_remote_profile) = id(default_profile); 
           
           // ============================================================
           // HYDRATE DEFAULT FACTORY REMOTE BACK INTO ACTIVE WORKSPACE
@@ -908,7 +908,7 @@ script:
           ESP_LOGI("NVS Flash", "All custom memory blocks wiped cleanly. System restored to default factory rules.");
 
           // Display panel text status sync pass
-          int current_idx = id(active_remote_layout);
+          int current_idx = id(active_remote_profile);
           
           // Because the workspace container is fully hydrated, we can read its profile name directly
           id(display_show)->execute(true,
@@ -1123,7 +1123,7 @@ script:
           else if (ir_protocolStr == "RC6") incoming_proto = PROTO_RC6;
 
           // Fetch the current active remote layout index
-          int current_idx = id(active_remote_layout);
+          int current_idx = id(active_remote_profile);
           int total_valid_slots = static_cast<int>(factory_count) + MAX_LEARNED_PROFILES;
           
           if (current_idx < 0 || current_idx >= total_valid_slots) {
@@ -1253,19 +1253,24 @@ script:
                 }
               }
 
-              // 3. EXECUTE METADATA ENGAGEMENT PASS IF A PROFILE KEY MATCH WAS FOUND
+              // ================================================================
+              // 3. SET AS ACTIVE PROFILE IF A MATCH WAS FOUND
+              // ================================================================
               if (match_found && matched_index != -1) {
                 id(set_profile_timeout_watcher).stop();
-                
-                
 
                 // Hydrate and lock the true winning layout completely into active RAM workspace
                 load_profile_to_workspace(matched_index);
                 
-                id(active_remote_layout) = matched_index;
-                id(setup_ir_receiver_for_current_profile).execute();
-                id(profile_has_been_stored) = 1; // remember that profile has been set
+                // Put matching index into active_remote_profile (which should be save in NVRAM)
+                id(active_remote_profile) = matched_index;
                 
+                // request NVRAM sync
+                global_preferences->sync(); // NB does not immediately write to NVRAM
+                id(profile_has_been_stored) = 1; // non-zero to indicate a profile has been saved
+
+                
+                id(setup_ir_receiver_for_current_profile).execute();
                 id(ir_receiver_mode) = IR_MODE_ACTION; // Securely revert right back to Action Mode
                 
                 id(flash_led_custom).execute(4, 50, 1.0, 0.0, 0.0);
@@ -1273,7 +1278,8 @@ script:
 
                 id(display_show)->execute(true, "Setting Profile", 
                                                 active_profile_workspace.profile_name, 
-                                                "Wait 5 seconds");
+                                                "Wait 5 Seconds");
+                                                
                 // FORCE AN INSTANT FOREGROUND REFRESH
                 id(last_active_idx_seen) = matched_index;
                 static char ir_change_buf[128];
@@ -1283,13 +1289,10 @@ script:
                          active_profile_workspace.profile_name.c_str(),
                          kind);
                 id(ir_active_profile_ts).publish_state(ir_change_buf);
-                // =====
-                                                
                                                 
               } else {
-                // SAFETY ARREST FALLBACK: If the scanned code completely missed all records, 
-                // instantly rehydrate your actually running configuration layout back into RAM
-                load_profile_to_workspace(id(active_remote_layout));
+                // SAFETY ARREST FALLBACK
+                load_profile_to_workspace(id(active_remote_profile));
                 ESP_LOGD("IR HUB", "No profile registry match found for incoming signature.");
               }
               break;
@@ -1361,7 +1364,7 @@ script:
                   id(display_show)->execute(true, "Stored Profile", active_profile_workspace.profile_name, "Operational");
                   
                   size_t target_vector_index = factory_count + selected_slot;
-                  id(active_remote_layout) = (int)target_vector_index; 
+                  id(active_remote_profile) = (int)target_vector_index; 
                   id(setup_ir_receiver_for_current_profile).execute();
                   id(ir_receiver_mode) = IR_MODE_ACTION; // Return safely to Action Mode
                   return;
@@ -1391,17 +1394,9 @@ script:
       event_state: int  # 0 = DOWN (Press), 1 = HOLDING (Repeat), 2 = UP (Release)
     then:
       - lambda: |-
-          uint32_t now = millis();
-          
-          // ============================================================
-          // 1. BOUNDARY VALIDATION & NATIVE WORKSPACE METADATA LOOKUP
-          // ============================================================
-          int current_idx = id(active_remote_layout);
+          int current_idx = id(active_remote_profile);
           int total_valid_slots = static_cast<int>(factory_count) + MAX_LEARNED_PROFILES;
-          if (current_idx < 0 || current_idx >= total_valid_slots) {
-            ESP_LOGE("IR_HUB", "Active remote layout index %d is out of bounds!", current_idx);
-            return;
-          }
+          if (current_idx < 0 || current_idx >= total_valid_slots) return;
           
           const auto& active_profile = active_profile_workspace;
           const IRCommand* found_cmd = nullptr;
@@ -1414,419 +1409,24 @@ script:
           }
 
           if (found_cmd == nullptr) {
-            static IRCommand web_fallback_cmd;
-            if (!id(action_string).empty()) {
-              std::strncpy(web_fallback_cmd.action_string, id(action_string).c_str(), sizeof(web_fallback_cmd.action_string) - 1);
-              web_fallback_cmd.action_string[sizeof(web_fallback_cmd.action_string) - 1] = '\0';
-              found_cmd = &web_fallback_cmd;
-            }
-          }
-
-          if (found_cmd == nullptr) {
             ESP_LOGV("IR_HUB", "Command 0x%X not mapped in current layout profile workspace.", (unsigned int)ir_command);
             return; 
           }
-          
-          std::string cmd_name = found_cmd->action_string;
-          uint32_t current_duration = now - id(global_initial_press_time);
 
-          // ====================================================================
-          // INTERCEPT A: TWO-STAGE HOTKEY ASSIGNMENT ENGINE (END OF CAPTURE)
-          // ====================================================================
-          if (id(macro_workflow_state) == MACRO_STATE_AWAITING_HOTKEY) {
-            if (event_state == KEY_EVENT_HOLDING) return; 
-            if (event_state == KEY_EVENT_DOWN) {
-              if (millis() - id(macro_assignment_cooldown) < 400) return;
-          
-              id(macro_assignment_timeout_watcher)->stop();
-          
-              int target_shared_slot = -1;
-              const char* key_name = found_cmd->action_string;
-              
-              if (std::strcmp(key_name, "cursor_enter") == 0)      { target_shared_slot = 0; }
-              else if (std::strcmp(key_name, "cursor_up") == 0)    { target_shared_slot = 1; }
-              else if (std::strcmp(key_name, "cursor_right") == 0) { target_shared_slot = 2; }
-              else if (std::strcmp(key_name, "cursor_down") == 0)  { target_shared_slot = 3; }
-              else if (std::strcmp(key_name, "cursor_left") == 0)  { target_shared_slot = 4; }
-              else if (std::strcmp(key_name, "shortcut_1") == 0)   { target_shared_slot = 5; }
-              else if (std::strcmp(key_name, "shortcut_2") == 0)   { target_shared_slot = 6; }
-              else if (std::strcmp(key_name, "shortcut_3") == 0)   { target_shared_slot = 7; }
-              else if (std::strcmp(key_name, "shortcut_4") == 0)   { target_shared_slot = 8; }
-          
-              if (target_shared_slot == -1) {
-                ESP_LOGE("MACRO_WORKFLOW", "Binding Rejected! Key '%s' is an invalid hotkey destination.", key_name);
-                id(showing_special_info) = true;
-                id(display_show)->execute(false, "Assignment Error", "Invalid Key Destination", "Action Mode");
-                id(macro_recording_active) = false;
-                id(macro_workflow_state) = MACRO_STATE_IDLE; 
-                
-                id(macro_indicator_end)->execute();
-                return; 
-              }
-          
-              id(macro_recording_active) = false; 
-              int match_idx = -1;
-              uint16_t current_loop_idx = 0;
-              uint16_t bounds_limit = global_binding_registry.total_bound_keys;
-          
-              while (current_loop_idx != bounds_limit) {
-                if (std::strcmp(global_binding_registry.bindings[current_loop_idx].action_string, key_name) == 0) {
-                  match_idx = (int)current_loop_idx;
-                  break;
-                }
-                current_loop_idx += 1;
-              }
-          
-              // --- STRICT BOUNDS CAPACITY VERIFICATION FLOOR ---
-              if (match_idx == -1 && global_binding_registry.total_bound_keys < MAX_BOUND_HOTKEYS) {
-                match_idx = (int)global_binding_registry.total_bound_keys;
-                global_binding_registry.total_bound_keys += 1;
-              }
-              
-              if (match_idx == -1) {
-                ESP_LOGE("MACRO_WORKFLOW", "Registry overflow! Absolute memory ceiling of %d hotkeys reached.", MAX_BOUND_HOTKEYS);
-                id(macro_indicator_end)->execute();
-                id(macro_workflow_state) = MACRO_STATE_IDLE;
-                return;
-              }
-                        
-              std::memset(global_binding_registry.bindings[match_idx].action_string, 0, MAX_ACTION_STRING_LEN);
-              std::strncpy(global_binding_registry.bindings[match_idx].action_string, key_name, MAX_ACTION_STRING_LEN - 1);
-              global_binding_registry.bindings[match_idx].action_string[MAX_ACTION_STRING_LEN - 1] = '\0';
-              global_binding_registry.bindings[match_idx].shared_macro_slot = target_shared_slot;
-              
-              id(commit_macro_to_flash_slot).execute(target_shared_slot);
-              id(save_binding_registry_to_nvs).execute();
-        
-              id(macro_indicator_end)->execute();
-        
-              char slot_msg_buf[32];
-              char key_msg_buf[48];
-              snprintf(slot_msg_buf, sizeof(slot_msg_buf), "Macro Bound Slot %d", target_shared_slot);
-              snprintf(key_msg_buf, sizeof(key_msg_buf), "Key: %s", key_name);
-        
-              id(showing_special_info) = true;
-              id(display_show)->execute(true, std::string(slot_msg_buf), std::string(key_msg_buf), "Action Mode");
-              
-              ESP_LOGW("MACRO_WORKFLOW", "Macro sequence committed to Fixed NVS Slot %d for button: %s", target_shared_slot, key_name);
-
-              id(macro_workflow_state) = MACRO_STATE_LIFTOFF_SHIELD; 
-              return; 
-            }
-            if (event_state == KEY_EVENT_UP) {
-              id(macro_workflow_state) = MACRO_STATE_IDLE; 
-              return; 
-            }
-          }
-
-          // ====================================================================
-          // INTERCEPT B: HOTKEY LIFTOFF SHIELD TRAPPER (STATE 99)
-          // ====================================================================
-          if (id(macro_workflow_state) == 99) {
-            if (event_state == KEY_EVENT_HOLDING) return; 
-            if (event_state == KEY_EVENT_UP) {
-              id(macro_workflow_state) = MACRO_STATE_IDLE; 
-              return; 
-            }
-          }
-
-          // ====================================================================
-          // TOGGLE CODES: STATE 0 ENTRY (DOWN) OR STATE 1 EXIT (DOWN) VIA RECORD KEY
-          // ====================================================================
-          if (std::strcmp(found_cmd->action_string, "macro_record") == 0 && event_state == KEY_EVENT_DOWN) {
-            if (id(macro_workflow_state) == MACRO_STATE_IDLE) {
-              id(start_macro_mapping_session)->execute(0); 
-              return; 
-            } 
-            else if (id(macro_workflow_state) == MACRO_STATE_RECORDING) {
-              id(macro_record_timeout_watcher)->stop();
-              
-              while (id(macro_step_counter) > 0) {
-                int check_idx = id(macro_step_counter) - 1;
-                if (std::strcmp(active_recording_buffer.steps[check_idx].action_string, found_cmd->action_string) == 0) {
-                  id(macro_step_counter) = check_idx;
-                } else {
-                  break;
-                }
-              }
-
-              active_recording_buffer.total_steps = id(macro_step_counter);
-          
-              if (id(macro_step_counter) == 0) {
-                id(macro_workflow_state) = MACRO_STATE_IDLE;
-                id(macro_recording_active) = false;
-                ESP_LOGW("MACRO_WORKFLOW", "Recording sequence empty. Aborting workflow.");
-                id(showing_special_info) = true;
-                id(display_show)->execute(false, "Record Canceled", "No steps cached", "Action Mode");
-                
-                id(turn_led_on_custom)->stop();
-                id(turn_led_off_custom)->execute();                
-                return;
-              }
-
-              active_recording_buffer.struct_version = CURRENT_MACRO_VERSION;
-              id(macro_workflow_state) = MACRO_STATE_AWAITING_HOTKEY;
-              
-              ESP_LOGW("MACRO_WORKFLOW", "Recording stopped. Awaiting assignment click...");
-              id(showing_special_info) = true;
-              id(display_show)->execute(false, "Assign Hotkey:", "CLICK desired button", "to save macro...");
-              id(macro_assignment_timeout_watcher)->execute();
-              return;
-            }
-          }
-
-          // ====================================================================
-          // TRIGGER PLAYBACK PREFIX WINDOW ON PLAY CLICK
-          // ====================================================================
-          if (std::strcmp(found_cmd->action_string, "macro_play") == 0 && event_state == KEY_EVENT_DOWN) {
-            if (id(macro_workflow_state) == MACRO_STATE_IDLE) {
-              id(macro_play_prefix_active) = true;
-              
-              id(showing_special_info) = true;
-              id(display_show)->execute(false, "Macro Playback", "Awaiting Hotkey...", "5s Timeout Gate");
-              id(macro_play_prefix_timeout_watcher)->execute(); 
-              return;
-            }
-          }
-
-          // ====================================================================
-          // INTERCEPT C: PREFIX PLAYBACK RUNNER GATE
-          // ====================================================================
-          if (id(macro_play_prefix_active)) {
-            if (event_state == KEY_EVENT_DOWN) {
-              uint8_t prefix_slot = get_bound_macro_slot(found_cmd->action_string);
-              id(macro_play_prefix_active) = false;
-              id(macro_play_prefix_timeout_watcher)->stop();
-
-              if (prefix_slot != 255) {
-                id(debounce_safety_lock) = true;
-                id(release_debounce_lock)->execute();
-                ESP_LOGI("MACRO_WORKFLOW", "Playback Hotkey Matched! Launching Macro Slot Sequence: %d", prefix_slot);
-                id(play_universal_shared_macro)->execute(prefix_slot);
-                return;
-              } else {
-                id(showing_special_info) = true;
-                id(display_show)->execute(false, "Playback Canceled", "No Macro Bound", "Action Mode");
-                id(showing_special_expiration_timer).execute();
-                return;
-              }
-            }
-            else if (event_state == KEY_EVENT_UP) {
-              return;
-            }
-          }
-
-          // ====================================================================
-          // UNIFIED HOOK: PASSIVE MID-STREAM CAPTURE REGISTRATION PIPELINE
-          // ====================================================================
-          if (id(macro_workflow_state) == MACRO_STATE_RECORDING) {
-            id(macro_record_timeout_watcher)->execute(); // Keep session alive
-            
-            // --- CORRECTION: USE THE CENTRAL PROHIBITED REGISTRY SAFETY CHECK ---
-            if (!is_action_allowed_as_macro_hotkey(found_cmd->action_string)) {
-              // We return instantly if the user presses an infrastructure or utility key
-              return; 
-            }
-
-            int step_idx = id(macro_step_counter);
-
-            // Swallow holding noise frames; our timing engine targets clean state edges exclusively
-            if (event_state != KEY_EVENT_HOLDING && step_idx < MAX_MACRO_STEPS) {
-              
-              // Defensive structural guard against contact bounce noise
-              if (event_state == KEY_EVENT_UP && step_idx > 0 && 
-                  active_recording_buffer.steps[step_idx - 1].event_state == KEY_EVENT_UP &&
-                  (now - id(macro_last_event_time) < 45)) {
-                return;
-              }
-
-              uint32_t delta = 0;
-              if (step_idx > 0) {
-                if (event_state == KEY_EVENT_UP) {
-                  // --- BRANCH 1: SPECIAL CONSTRAINT TARGET (POWER_OFF OVERRIDE) ---
-                  if (std::strcmp(found_cmd->action_string, "power_off") == 0) {
-                    delta = 1500; 
-                    ESP_LOGD("MACRO_REC", "Special Case Applied: Clamped 'power_off' hold to 1500ms");
-                  } else {
-                    // --- BRANCH 2: SMART ADAPTIVE AUTOCORRECT FILTER ---
-                    uint32_t true_hold = now - id(macro_last_event_time);
-                    if (true_hold < 450) {
-                      delta = 50; // Clean up tired or accidental sluggish holds back into a standard tap
-                      ESP_LOGD("MACRO_REC", "Cleanup Filter Active: Normalized %ums hold down to 50ms tap", (unsigned int)true_hold);
-                    } else {
-                      delta = true_hold; // Intentional, sustained physical long-press duration cached
-                    }
-                  }
-                } else {
-                  // Calculate human pacing interval gap between distinct button selections
-                  delta = now - id(macro_last_event_time);
-                  if (delta < 200) delta = 200; // Protect spacing gap minimum threshold floor
-                }
-                if (delta > 65535) delta = 65535;
-              }
-
-              std::memset(active_recording_buffer.steps[step_idx].action_string, 0, MAX_ACTION_STRING_LEN);
-              std::strncpy(active_recording_buffer.steps[step_idx].action_string, found_cmd->action_string, MAX_ACTION_STRING_LEN - 1);
-              
-              active_recording_buffer.steps[step_idx].event_state = (uint8_t)event_state;
-              active_recording_buffer.steps[step_idx].delay_ms = (uint16_t)delta;
-              
-              id(macro_last_event_time) = now;
-              id(macro_step_counter) = step_idx + 1;
-              active_recording_buffer.total_steps = id(macro_step_counter);
-              
-              ESP_LOGI("MACRO_REC", "Inline Mirror Captured -> Step [%d]: %s (State: %d, Delay: %u ms)", 
-                       step_idx, found_cmd->action_string, event_state, (unsigned int)delta);
-            }
-            // Control safely flows straight into the system output and driver components down below...
-          }
-          // ============================================================
-          // POPULATE DYNAMIC TRACKING SENSOR STRINGS
-          // ============================================================
-          if (id(macro_playback_active) == true) {
-            return; 
-          }
-
-          if (!id(global_token_clear_armed)) {
-            // Securely lock the string from the clean, validated command name 
-            // instead of running an array re-indexing loop
-            id(action_string).assign(cmd_name);
-            
-            if (get_bound_macro_slot(cmd_name.c_str()) != 255) {
-              id(action_string).append(" *");
-            } else if (event_state == KEY_EVENT_HOLDING && current_duration >= 4000) {
-              id(action_string).append(" [hold]");
-            } else if (event_state == KEY_EVENT_HOLDING) {
-              id(action_string).append(" ..");
-            }
-          }
-
-          char cmd_buf[32] = {0};
-          char addr_buf[32] = {0};
-          snprintf(cmd_buf, sizeof(cmd_buf), "0x%04X", (unsigned int)ir_command);
-          snprintf(addr_buf, sizeof(addr_buf), "0x%04X", (unsigned int)active_profile.device_address);
-          std::string commandStr(cmd_buf);
-          std::string addressStr(active_profile.profile_name);
-
-          if (id(showing_special_info) == true) {
-            id(showing_special_expiration_timer).execute();
-          } else {
-            // We cleanly pass the optimized action_string here
-            id(display_show)->execute(false, id(action_string), addressStr, commandStr);
-          }
-
-          // ============================================================
-          // PROGRAMMATIC SCRIPT INTERCEPT INTERFACE
-          // ============================================================
-          bool is_automated_script_action = (std::strcmp(found_cmd->action_string, "power_off") == 0 || 
-                                             std::strcmp(found_cmd->action_string, "power_on") == 0);
-          
-          if (is_automated_script_action) {
-            if (event_state == KEY_EVENT_DOWN) {
-              auto* target_btn = resolve_button(found_cmd->action_string);
-              if (target_btn != nullptr) {
-                target_btn->press(); 
-                ESP_LOGI("IR_PROCESSOR", "IR Map redirected pass-through to native macro script for: %s", found_cmd->action_string);
-              } else {
-                fire_bluetooth_hid_action(found_cmd->action_string, event_state);
-              }
-              
-              id(global_cached_command) = 0;
-              id(global_initial_press_time) = 0;
-              id(global_last_processed_time) = 0;
-              id(global_is_holding) = false;
-            }
-            return; 
-          }
-
-          // ============================================================
-          // UNIFIED ACTION DRIVER INJECTION PIPELINE
-          // ============================================================
-          if (std::strcmp(found_cmd->action_string, "token_sniff") == 0) {
-            if (event_state == KEY_EVENT_DOWN) {
-              id(showing_special_info) = true;
-              id(sniffing_sequence).execute(); 
-            }
-            return;
-          } 
-          else if (std::strcmp(found_cmd->action_string, "token_recall") == 0) {
-            if (event_state == KEY_EVENT_DOWN) {
-              id(showing_special_info) = true;
-              id(execute_token_recall_routine).execute();
-            }
-            return;
-          } 
-          
-          // ============================================================
-          // ARMED PROTECTION GUARD: ROGUE KEY INTERCEPT CANCEL
-          // ============================================================
-          if (id(global_token_clear_armed)) {
-            // If the system is armed, ANY key that is not the confirmation key cancels the operation
-            if (std::strcmp(found_cmd->action_string, "cursor_enter") != 0) {
-              if (event_state == KEY_EVENT_DOWN) {
-                id(token_clear_safety_timeout)->stop(); // Kill the active watchdog timer execution
-                id(global_token_clear_armed) = false;   // Disarm safety state latch registers immediately
-                
-                // Reset screen UI state to drop the prompt safely
-                id(showing_special_info) = false;
-                id(display_show)->execute(false, "Wipe Aborted", "Safety Disarmed", active_profile_workspace.profile_name);
-                ESP_LOGW("IR Safety", "Rogue action '%s' pressed while armed! Safety gate canceled.", found_cmd->action_string);
-              }
-              return; // Swallow the rogue key completely so it doesn't execute out to BLE or other engines
-            }
-          }
-
-          // ============================================================
-          // ARMED REGISTRATION: ARM THE ENGINE VIA UTILITY BUTTON
-          // ============================================================
-          else if (std::strcmp(found_cmd->action_string, "token_clear") == 0) {
-            if (event_state == KEY_EVENT_DOWN) {
-              // --- STAGE 1: ARM THE ENGINE ---
-              id(global_token_clear_armed) = true;
-              
-              // Fire up the 15-second automatic timeout watchdog countdown script
-              id(token_clear_safety_timeout).execute(); 
-              
-              // Update screen buffer states to reflect the armed lock status cleanly
-              id(showing_special_info) = true;
-              id(display_show)->execute(false, "Token Clear", "Press OK (Enter)", "To Confirm...");
-              ESP_LOGW("IR Safety", "Wake token wipe requested. Safety gate armed! Awaiting OK confirmation click...");
-            }
-            return;
-          }
-
-          // ============================================================
-          // ARMED HANDSHAKE ENGINE: OK/ENTER CONFIRMATION INTERCEPT
-          // ============================================================
-          if (std::strcmp(found_cmd->action_string, "cursor_enter") == 0 && id(global_token_clear_armed)) {
-            if (event_state == KEY_EVENT_DOWN) {
-              id(token_clear_safety_timeout)->stop(); // Kill the active watchdog timer
-              id(global_token_clear_armed) = false;   // Disarm safety state latch registers
-              
-              id(showing_special_info) = true;
-              id(run_token_clear_worker).execute();   // Securely commit deletion pass to flash slots
-              ESP_LOGE("IR Safety", "Safety handshake verified via OK button. Persistent wake token cache wiped successfully.");
-            }
-            return; // Swallow the click so it does not fire a normal BLE enter keystroke to your device
-          }
-
-          // ============================================================
-
+          uint32_t now = millis();
           if (id(global_cached_command) != ir_command) {
             if (event_state == KEY_EVENT_DOWN) {
               id(global_cached_command) = ir_command;
               id(global_initial_press_time) = now;
               id(global_last_processed_time) = now;
             }
-          } else {
-            if (event_state == KEY_EVENT_HOLDING) {
-              id(global_is_holding) = true;
-              id(global_last_processed_time) = now;
-            }
+          } else if (event_state == KEY_EVENT_HOLDING) {
+            id(global_is_holding) = true;
+            id(global_last_processed_time) = now;
           }
 
-          // Transmit directly down into your low-level hardware BLE abstraction layers
-          fire_bluetooth_hid_action(found_cmd->action_string, event_state);
+          // 🚀 Streamlined pure text handoff!
+          execute_action_pipeline(found_cmd->action_string, event_state, ir_command);
 
           if (event_state == KEY_EVENT_UP) {
             id(global_cached_command) = 0;
@@ -1834,7 +1434,6 @@ script:
             id(global_last_processed_time) = 0;
             id(global_is_holding) = false;
           }
-          
           id(macro_assignment_cooldown) = now;
           
   # ====================== END of ir_map_processor =======================
@@ -1850,12 +1449,12 @@ script:
   - id: setup_ir_receiver_for_current_profile
     then:
       - lambda: |-
-          size_t true_hardware_index = id(active_remote_layout);
+          size_t true_hardware_index = id(active_remote_profile);
           int total_valid_slots = static_cast<int>(factory_count) + MAX_LEARNED_PROFILES;
 
           if (true_hardware_index >= total_valid_slots) {
             ESP_LOGW("Profile Control", "Target index out of bounds! Overriding to safe default layout...");
-            id(active_remote_layout) = id(default_profile); 
+            id(active_remote_profile) = id(default_profile); 
             true_hardware_index = id(default_profile);
             load_profile_to_workspace(true_hardware_index);
           }
@@ -1926,7 +1525,7 @@ script:
             ESP_LOGW("IR Hub", "Set Profile Mode timed out after 15 seconds. Reverting to action mode.");
             
             // Explicitly declare variables inside this scope block
-            int current_idx = id(active_remote_layout);
+            int current_idx = id(active_remote_profile);
             std::string current_name = "Default";
             
             int total_valid_slots = static_cast<int>(factory_count) + MAX_LEARNED_PROFILES;
@@ -1973,7 +1572,6 @@ interval:
   # ====================================================================
   # TIMER 2: True One-Shot Post-Boot Storage Recovery & Workspace Hydration
   # ====================================================================
-  # UNCHANGED: Kept exactly as original to protect safe system boots.
   - interval: 1.0sec 
     id: boot_initialization_timer 
     then:
@@ -1981,33 +1579,38 @@ interval:
 
           ESP_LOGI("ir_hub", "Executing secure unified workspace hydration pass...");
           
-          int boot_idx = id(active_remote_layout); 
-          flash_hydration_complete = true; 
+          // active_remote_profile is restored from NVRAM at boot
+          // Zero indicates either AWOL or fresh NVRAM. Test whether fresh NVRAM by also looking at profile_has_been_stored
 
-          // --- FRESH NVRAM FOOTPRINT DETECTION ---
+          int boot_idx = id(active_remote_profile);
+
           if (boot_idx == 0) {
-            if (id(profile_has_been_stored) == 0) {
-              // This is a fresh erase! Use the user's compile-time def_profile
-              ESP_LOGW("ir_hub", "Fresh uninitialized NVRAM detected! Using default profile: %d", ${def_profile});
+            // we do not know if AWOL or fresh NVRAM. Check if fresh NVRAM
+            bool freshNVRAM = (id(profile_has_been_stored) == 0);
+            if (freshNVRAM) {
+              // Use the compile-time def_profile
               boot_idx = ${def_profile};
-              id(active_remote_layout) = boot_idx;
-              
-            } else {
-              // The user explicitly stored index 0 (AWOL) in the past. Simply keep it.
-              ESP_LOGI("ir_hub", "Restoring explicitly saved AWOL layout (Index 0).");
+              id(active_remote_profile) = boot_idx;
+              id(profile_has_been_stored) = 1; // Mark profile as having been saved after defaulting
+
+              ESP_LOGW("ir_hub", "Uninitialized NVRAM! Using default profile: %d", ${def_profile});
             }
-            // Mark profile as having been saved
-            id(profile_has_been_stored) = 1;
-          } //--- end FRESH NVRAM
+            
+          } 
+          
+          // boot_idx falls through as a saved or defaulted value
 
           int total_valid_slots = static_cast<int>(factory_count) + MAX_LEARNED_PROFILES;
           if (boot_idx < 0 || boot_idx >= total_valid_slots) {
-            boot_idx = id(default_profile);
-            id(active_remote_layout) = boot_idx;
+            // out of bounds, default to 
+            boot_idx = ${def_profile};
+            id(active_remote_profile) = boot_idx;
+            id(profile_has_been_stored) = 1; // Mark profile as having been saved after defaulting
           }
 
           load_profile_to_workspace(boot_idx);
-          id(selected_profile_slot) = boot_idx;
+          id(selected_profile_slot) = boot_idx; // initial value for selector
+
 
           auto select_obj = id(ir_profile_slot_selector);
           if (boot_idx >= 0 && boot_idx < total_valid_slots) {
@@ -2028,6 +1631,7 @@ interval:
       - lambda: |-      
           id(ir_receiver_mode) = IR_MODE_ACTION; 
           id(ir_active_profile_ts).update();
+          flash_hydration_complete = true; 
 
       - script.execute: display_token_remote_profile
       - component.suspend: boot_initialization_timer

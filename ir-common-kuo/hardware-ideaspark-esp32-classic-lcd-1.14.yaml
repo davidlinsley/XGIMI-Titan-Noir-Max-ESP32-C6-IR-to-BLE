@@ -1,6 +1,6 @@
 # Ideaspark ESP32 Development Board Integrated 1.14 inch ST7789 240x320 LCD
 # Will not power up board if connected to PC via USB-C to USB-C cable
-# Board lacks some config resistors on USB-C port. So PC's fail to supply power.
+# Board lacks some config resistors on USB-C port. So, PC's fail to supply power.
 # 
 # Requires use of usb-c to usb-A cable to power up and program connected to PC.
 # Will aso work if usb-c to usb-A cable connected to PC via USB-C to USB-A adapter
@@ -9,9 +9,7 @@
 # Onboard, blue indicator LED cannot be used as indicator because it is connected
 # to GPIO2 which is also display dc_pin that continually lights up blue LED.
 #
-# RAM too small
-#
-# Display will not reactivate after blank page is shown
+# RAM extremely limited. We reduce display bit depth and limit fonts to mitigate.
  
 # ============= BEGIN Configuration Options KUO ==========
 
@@ -19,6 +17,7 @@ substitutions:
   pin_ir_receiver: GPIO16
   pin_indicator_LED: GPIO17 # use external LED. On board LED conflicts with display dc_pin
   pin_action_btn: GPIO0    # use boot button to start actions
+  pin_action_btn_pullup: true
   wifi_tx_power: "15dB"
 
 # Core Architecture Declaration
@@ -129,15 +128,9 @@ script:
 
 font:
   - file: "gfonts://Roboto"
-    id: my_fontSmall
-    size: 20
-  - file: "gfonts://Roboto"
     id: my_fontMedium
-    size: 22
-  - file: "gfonts://Roboto"
-    id: my_fontLarge
-    size: 30
-
+    size: 20
+    glyphs: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 :.,_[]*+-()=/!"
     
 spi:
   clk_pin: GPIO18
@@ -148,6 +141,7 @@ display:
   - platform: mipi_spi
     id: myDisplay
     model: st7789v
+    color_depth: 8       # <--- reduce ram usage
     dimensions:
       width: 135
       height: 240
@@ -160,7 +154,7 @@ display:
     cs_pin: GPIO15
     reset_pin: GPIO4
     dc_pin: GPIO2
-    update_interval: 0.1s
+    update_interval: 0.3s
     data_rate: 40MHz    
 
     on_page_change:
@@ -185,9 +179,9 @@ display:
             auto L2color = Color(255, 120, 0);
             auto L3color = Color(255, 150, 0);
 
-            it.print(5, 20,  id(my_fontSmall), L1color, id(myDisplay_line1).c_str());
-            it.print(5, 50,  id(my_fontSmall), L2color, id(myDisplay_line2).c_str());
-            it.print(5, 85, id(my_fontLarge), L3color,  id(myDisplay_line3).c_str());
+            it.print(5, 20, id(my_fontMedium), L1color, id(myDisplay_line1).c_str());
+            it.print(5, 50, id(my_fontMedium), L2color, id(myDisplay_line2).c_str());
+            it.print(5, 80, id(my_fontMedium), L3color,  id(myDisplay_line3).c_str());
 
       - id: active_page_small
         lambda: |-
@@ -195,9 +189,9 @@ display:
             auto L2color = Color(255, 130, 0);
             auto L3color = Color(255, 130, 0);
             
-            it.print(5, 20,  id(my_fontMedium), L1color, id(myDisplay_line1).c_str());
-            it.print(5, 50,  id(my_fontMedium), L2color, id(myDisplay_line2).c_str());
-            it.print(5, 80,  id(my_fontMedium),L3color, id(myDisplay_line3).c_str());
+            it.print(5, 20, id(my_fontMedium), L1color, id(myDisplay_line1).c_str());
+            it.print(5, 50, id(my_fontMedium), L2color, id(myDisplay_line2).c_str());
+            it.print(5, 80, id(my_fontMedium), L3color, id(myDisplay_line3).c_str());
 
       - id: blank_page
         lambda: |-

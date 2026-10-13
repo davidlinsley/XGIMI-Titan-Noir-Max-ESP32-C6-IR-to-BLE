@@ -4,6 +4,7 @@ substitutions:
   pin_ir_receiver: GPIO1   # IR sensor. 
   pin_indicator_LED: GPIO8 # LED indicator (both ESP32-C3 and C6)
   pin_action_btn: GPIO9     # use boot button for actions. Both ESP32-c3 and ESP32-C6 use pin 9 for boot button. 
+  pin_action_btn_pullup: true
   wifi_tx_power: "10dB"
   
 # Core Architecture Declaration
@@ -11,9 +12,7 @@ esp32:
   board: esp32-c3-devkitm-1
   framework:
     type: esp-idf
-  
-  
-  
+    
 # i2c Display Pins
 i2c: 
   sda: GPIO5

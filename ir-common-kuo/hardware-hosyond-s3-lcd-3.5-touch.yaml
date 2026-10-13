@@ -5,6 +5,7 @@ substitutions:
   pin_ir_receiver: GPIO45 # spare GPIO on expansion pin connector
   pin_indicator_LED: GPIO40 # neopixel
   pin_action_btn: GPIO0 # use boot button to start actions
+  pin_action_btn_pullup: true
   wifi_tx_power: "14dB"
 
   display_BL_percent: 50%
@@ -23,9 +24,9 @@ esphome:
   on_boot:
     - priority: 100.0
       then:
-        - output.set_level:
+        - light.turn_on:
             id: display_backlight
-            level: ${display_BL_percent}
+            brightness: ${display_BL_percent}
 
 psram:
   mode: octal
@@ -58,16 +59,19 @@ light:
     name: "Sniffer Indicator"
     internal: true
 
-  - platform: monochromatic
+  - platform: monochromatic  
     name: "Display Backlight"
     id: display_backlight
-    output: display_backlight_output
+    output: backlight_pwm
     default_transition_length: 0.5s
-    
+    gamma_correct: 0          # Keeps response linear 
+    restore_mode: ALWAYS_OFF    
+    internal: true
+
 output: 
   - platform: ledc # display backlight engine
     pin: GPIO41       
-    id: display_backlight_output
+    id: backlight_pwm
     frequency: 4000Hz    
 
   - platform: gpio
@@ -238,9 +242,8 @@ display:
               condition:
                 lambda: 'return to == id(blank_page);'
               then:
-                - light.turn_on:
+                - light.turn_off:
                     id: display_backlight
-                    brightness: 0%
               else:
                 - light.turn_on:
                     id: display_backlight

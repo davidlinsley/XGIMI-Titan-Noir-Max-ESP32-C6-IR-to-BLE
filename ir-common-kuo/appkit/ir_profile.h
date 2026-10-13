@@ -323,15 +323,18 @@ inline bool is_action_allowed_as_macro_hotkey(const char* action_name) {
     // ====================================================================
     if (std::strcmp(action_name, "macro_record") == 0  || 
         std::strcmp(action_name, "macro_play") == 0    ||
+        std::strcmp(action_name, "ble_pair") == 0      || 
         std::strcmp(action_name, "ble_clear") == 0     ||
-        std::strcmp(action_name, "ble_pair") == 0      ||
         std::strcmp(action_name, "power_on") == 0      || // Block system wake bursts from automation paths
         std::strcmp(action_name, "power_off") == 0     || // Block premature projector power downs
         std::strcmp(action_name, "token_clear") == 0   || // Block structural safety lock/wipe scripts
         std::strcmp(action_name, "token_sniff") == 0   || // Block active GATT sniffer loops
-        std::strcmp(action_name, "token_recall") == 0) {   // Block diagnostic OSD takeovers
+        std::strcmp(action_name, "token_recall") == 0) {  // Block diagnostic OSD takeovers
         
-        ESP_LOGW("MACRO_ENGINE", "Safety Intercept: Prohibited action string '%s' blocked from macro registry.", action_name);
+        // Log prohibition only if macro recording is active
+        if (esphome::id(macro_workflow_state).value() == MACRO_STATE_RECORDING) {
+            ESP_LOGW("MACRO_ENGINE", "Safety Intercept: Prohibited action string '%s' blocked from macro registry.", action_name);
+        }
         return false;
     }
     return true;
@@ -1158,9 +1161,7 @@ static const char* const factory_names[] = {
 };
     
     
-// ====================================================================
-// ON-DEMAND DYNAMIC HYDRATION ENGINE (FACTORY PROFILES MAP)
-// ====================================================================
+// THE UNIFIED ON-DEMAND DYNAMIC HYDRATION ENGINE
 inline void load_profile_to_workspace(int idx) {
   active_profile_workspace.cmd_codes.clear();
   int factory = static_cast<int>(factory_count);
@@ -1343,7 +1344,7 @@ inline void link_hardware_buttons() {}
 // 8. HEAP-SAFE HIGH-EFFICIENCY FLAT CSV EXPORT STREAM GENERATOR
 // ====================================================================
 inline std::string generate_profile_csv(int idx) {
-  int current_active = esphome::id(active_remote_layout).value();
+  int current_active = esphome::id(active_remote_profile).value();
   
   if (idx != current_active) {
       load_profile_to_workspace(idx);
@@ -1386,12 +1387,9 @@ inline std::string generate_profile_csv(int idx) {
   std::string meta_line = "META," + std::to_string(idx) + "," + p.profile_name + "," + to_string(p.protocol) + ",";
   
   char addr_buf[32];
-  char arm_buf[32];
-  char fire_buf[32];
-  
   snprintf(addr_buf, sizeof(addr_buf), addr_fmt, (unsigned int)p.device_address);
   
-  snprintf(chunk_buf, sizeof(chunk_buf), "%s,%s,%s\n", addr_buf, arm_buf, fire_buf);
+  snprintf(chunk_buf, sizeof(chunk_buf), "%s\n", addr_buf);
   csv_out += meta_line + chunk_buf;
 
   // Rows 2+: Command Code Data Rows (Strict Padding Applied)
@@ -1463,8 +1461,6 @@ inline bool import_profile_from_csv(const std::string& csv_data) {
             std::string_view name_view  = get_next_cell(line_view);
             std::string_view proto_view = get_next_cell(line_view);
             std::string_view addr_view  = get_next_cell(line_view);
-            std::string_view arm_view   = get_next_cell(line_view);
-            std::string_view fire_view  = get_next_cell(line_view);
 
             active_profile_workspace.profile_name.assign(name_view.data(), name_view.size());
 
@@ -1579,6 +1575,371 @@ inline bool import_profile_from_csv(const std::string& csv_data) {
     ESP_LOGI("CSV Import", "Successfully recovered %d layout items.", (int)keys_imported);
     return true;
 } 
+
+
+
+// ====================================================================
+// WORKER FOR UNIFIED TEXT-DRIVEN DECOUPLED STATE MACHINE ENGINE PIPELINE
+// Handles all macro logic, safety gates, and BLE transmission 
+// strictly via string tokens, bypassing all IR lookup vulnerabilities.
+// ====================================================================
+inline void execute_action_pipeline_worker(const std::string& cmd_name, int event_state, uint32_t raw_ir_hex = 0) {
+    uint32_t now = millis();
+    uint32_t current_duration = now - esphome::id(global_initial_press_time).value();
+    uint32_t workflow_state = esphome::id(macro_workflow_state).value();
+    bool is_prefix_listening = esphome::id(macro_play_prefix_active).value();
+    bool is_token_clear_armed = esphome::id(global_token_clear_armed).value();
+    
+    // ====================================================================
+    // 1. FIXED INFRASTRUCTURE INTERCEPTS & STATE TRANSITIONS
+    // Evaluated FIRST to prevent utility triggers from bleeding into macro buffers.
+    // ====================================================================
+
+    // ====================================================================
+    // INTERCEPT A: TWO-STAGE HOTKEY ASSIGNMENT ENGINE (END OF CAPTURE)
+    // ====================================================================
+    if (workflow_state == MACRO_STATE_AWAITING_HOTKEY) {
+        if (event_state == KEY_EVENT_HOLDING) return; 
+        
+        if (event_state == KEY_EVENT_DOWN) {
+            esphome::id(macro_assignment_timeout_watcher).stop(); 
+        
+            int target_shared_slot = -1;
+            const char* key_name = cmd_name.c_str();
+            
+            if (std::strcmp(key_name, "cursor_enter") == 0)      { target_shared_slot = 0; }
+            else if (std::strcmp(key_name, "cursor_up") == 0)    { target_shared_slot = 1; }
+            else if (std::strcmp(key_name, "cursor_right") == 0) { target_shared_slot = 2; }
+            else if (std::strcmp(key_name, "cursor_down") == 0)  { target_shared_slot = 3; }
+            else if (std::strcmp(key_name, "cursor_left") == 0)  { target_shared_slot = 4; }
+            else if (std::strcmp(key_name, "shortcut_1") == 0)   { target_shared_slot = 5; }
+            else if (std::strcmp(key_name, "shortcut_2") == 0)   { target_shared_slot = 6; }
+            else if (std::strcmp(key_name, "shortcut_3") == 0)   { target_shared_slot = 7; }
+            else if (std::strcmp(key_name, "shortcut_4") == 0)   { target_shared_slot = 8; }
+        
+            if (target_shared_slot == -1) {
+                ESP_LOGE("MACRO_WORKFLOW", "Binding Rejected! Key '%s' is an invalid hotkey destination.", key_name);
+                esphome::id(showing_special_info).value() = true;
+                esphome::id(display_show).execute(false, "Assignment Error", "Invalid Key Destination", "Action Mode"); 
+                esphome::id(macro_recording_active).value() = false;
+                esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE; 
+                esphome::id(macro_indicator_end).execute(); 
+                return; 
+            }
+        
+            esphome::id(macro_recording_active).value() = false; 
+            int match_idx = -1;
+            uint16_t current_loop_idx = 0;
+            uint16_t bounds_limit = global_binding_registry.total_bound_keys;
+        
+            while (current_loop_idx != bounds_limit) {
+                if (std::strcmp(global_binding_registry.bindings[current_loop_idx].action_string, key_name) == 0) {
+                    match_idx = (int)current_loop_idx;
+                    break;
+                }
+                current_loop_idx += 1;
+            }
+        
+            if (match_idx == -1 && global_binding_registry.total_bound_keys < MAX_BOUND_HOTKEYS) {
+                match_idx = (int)global_binding_registry.total_bound_keys;
+                global_binding_registry.total_bound_keys += 1;
+            }
+            
+            if (match_idx == -1) {
+                ESP_LOGE("MACRO_WORKFLOW", "Registry overflow! Absolute memory ceiling of %d hotkeys reached.", MAX_BOUND_HOTKEYS);
+                esphome::id(macro_indicator_end).execute(); 
+                esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE;
+                return;
+            }
+                      
+            std::memset(global_binding_registry.bindings[match_idx].action_string, 0, MAX_ACTION_STRING_LEN);
+            std::strncpy(global_binding_registry.bindings[match_idx].action_string, key_name, MAX_ACTION_STRING_LEN - 1);
+            global_binding_registry.bindings[match_idx].action_string[MAX_ACTION_STRING_LEN - 1] = '\0';
+            global_binding_registry.bindings[match_idx].shared_macro_slot = target_shared_slot;
+            
+            esphome::id(commit_macro_to_flash_slot).execute(target_shared_slot); 
+            esphome::id(save_binding_registry_to_nvs).execute(); 
+            esphome::id(macro_indicator_end).execute(); 
+      
+            char slot_msg_buf[32];
+            char key_msg_buf[48];
+            snprintf(slot_msg_buf, sizeof(slot_msg_buf), "Macro Bound Slot %d", target_shared_slot);
+            snprintf(key_msg_buf, sizeof(key_msg_buf), "Key: %s", key_name);
+      
+            esphome::id(showing_special_info).value() = true;
+            esphome::id(display_show).execute(true, std::string(slot_msg_buf), std::string(key_msg_buf), "Action Mode"); 
+            
+            ESP_LOGW("MACRO_WORKFLOW", "Macro sequence committed to Fixed NVS Slot %d for button: %s", target_shared_slot, key_name);
+            esphome::id(macro_workflow_state).value() = MACRO_STATE_LIFTOFF_SHIELD; 
+            return; 
+        }
+        if (event_state == KEY_EVENT_UP) {
+            esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE; 
+            return; 
+        }
+    }
+
+    // --- STAGE B: HOTKEY LIFTOFF SHIELD TRAPPER (STATE 99) ---
+    if (workflow_state == 99) {
+        if (event_state == KEY_EVENT_HOLDING) return; 
+        if (event_state == KEY_EVENT_UP) {
+            esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE; 
+            return; 
+        }
+    }
+
+    // --- STAGE C: MACRO RECORD TOGGLE COMMAND (IMMEDIATE EXIT GATES) ---
+    if (cmd_name == "macro_record" && event_state == KEY_EVENT_DOWN) {
+        if (workflow_state == MACRO_STATE_IDLE) {
+            esphome::id(start_macro_mapping_session).execute(0); 
+            return; 
+        } 
+        else if (workflow_state == MACRO_STATE_RECORDING) {
+            esphome::id(macro_record_timeout_watcher).stop(); 
+            
+            active_recording_buffer.total_steps = esphome::id(macro_step_counter).value();
+        
+            // If zero legitimate steps were logged prior to clicking Stop, cancel cleanly
+            if (active_recording_buffer.total_steps == 0) {
+                esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE;
+                esphome::id(macro_recording_active).value() = false;
+                ESP_LOGW("MACRO_WORKFLOW", "Recording sequence empty. Aborting workflow.");
+                esphome::id(showing_special_info).value() = true;
+                esphome::id(display_show).execute(false, "Record Canceled", "No steps cached", "Action Mode"); 
+                
+                esphome::id(turn_led_on_custom).stop(); 
+                esphome::id(turn_led_off_custom).execute(); 
+                return;
+            }
+
+            active_recording_buffer.struct_version = CURRENT_MACRO_VERSION;
+            esphome::id(macro_workflow_state).value() = MACRO_STATE_AWAITING_HOTKEY;
+            
+            ESP_LOGW("MACRO_WORKFLOW", "Recording stopped immediately. Transitioning straight to assignment...");
+            esphome::id(showing_special_info).value() = true;
+            esphome::id(display_show).execute(false, "Assign Hotkey:", "CLICK desired button", "to save macro..."); 
+            esphome::id(macro_assignment_timeout_watcher).execute(); 
+            return;
+        }
+    }
+
+    // --- STAGE D: MACRO PLAYBACK TRIGGER CONTROLS ---
+    if (cmd_name == "macro_play" && event_state == KEY_EVENT_DOWN) {
+        if (workflow_state == MACRO_STATE_IDLE) {
+            esphome::id(macro_play_prefix_active).value() = true;
+            esphome::id(showing_special_info).value() = true;
+            esphome::id(display_show).execute(false, "Macro Playback", "Awaiting Hotkey...", "5s Timeout Gate"); 
+            esphome::id(macro_play_prefix_timeout_watcher).execute(); 
+            return;
+        }
+    }
+
+    // --- STAGE E: PREFIX PLAYBACK RUNNER GATE ---
+    if (is_prefix_listening) {
+        if (event_state == KEY_EVENT_DOWN) {
+            uint8_t prefix_slot = get_bound_macro_slot(cmd_name.c_str());
+            esphome::id(macro_play_prefix_active).value() = false;
+            esphome::id(macro_play_prefix_timeout_watcher).stop(); 
+
+            if (prefix_slot != 255) {
+                esphome::id(debounce_safety_lock).value() = true;
+                esphome::id(release_debounce_lock).execute(); 
+                ESP_LOGI("MACRO_WORKFLOW", "Playback Hotkey Matched! Launching Macro Slot Sequence: %d", prefix_slot);
+                esphome::id(play_universal_shared_macro).execute(prefix_slot);
+                return;
+            } else {
+                esphome::id(showing_special_info).value() = true;
+                esphome::id(display_show).execute(false, "Playback Canceled", "No Macro Bound", "Action Mode");
+                esphome::id(showing_special_expiration_timer).execute();
+                return;
+            }
+        }
+        else if (event_state == KEY_EVENT_UP) {
+            return;
+        }
+    }
+
+    // ====================================================================
+    // 2. PASSIVE MID-STREAM CAPTURE REGISTRATION PIPELINE
+    // Safely positioned at the bottom so utility/stop keys exit before this runs.
+    // ====================================================================
+    if (workflow_state == MACRO_STATE_RECORDING) {
+        esphome::id(macro_record_timeout_watcher).execute(); 
+
+        // Completely isolates macro utility controls from entering validation checks or buffers.
+        if (cmd_name == "macro_record" || cmd_name == "macro_play" || 
+            cmd_name == "power_on"     || cmd_name == "power_off") {
+            return; // Exit silently—never record or throw a warning for macro state or power keys!
+        }
+
+        if (!is_action_allowed_as_macro_hotkey(cmd_name.c_str())) {
+            // Temporarily take over display status to flag the rejection cleanly
+            esphome::id(showing_special_info).value() = true;
+            esphome::id(display_show).execute(false, "Key Prohibited", cmd_name, "Skipping Step...");
+            esphome::id(showing_special_expiration_timer).execute(); // Safe auto-clear after 4s
+            
+            return; // 🚀 OPERATIONAL FIX: Terminate function here so lower display logic is ignored
+        }
+
+        int step_idx = esphome::id(macro_step_counter).value();
+
+        if (event_state != KEY_EVENT_HOLDING && step_idx < MAX_MACRO_STEPS) {
+            if (event_state == KEY_EVENT_UP && step_idx > 0 && 
+                active_recording_buffer.steps[step_idx - 1].event_state == KEY_EVENT_UP &&
+                (now - esphome::id(macro_last_event_time).value() < 45)) {
+                return;
+            }
+
+            uint32_t delta = 0;
+            if (step_idx > 0) {
+                if (event_state == KEY_EVENT_UP) {
+                    if (cmd_name == "power_off") {
+                        delta = 1500; 
+                    } else {
+                        uint32_t true_hold = now - esphome::id(macro_last_event_time).value();
+                        delta = (true_hold < 450) ? 50 : true_hold;
+                    }
+                } else {
+                    delta = now - esphome::id(macro_last_event_time).value();
+                    if (delta < 200) delta = 200;
+                }
+                if (delta > 65535) delta = 65535;
+            }
+
+            std::memset(active_recording_buffer.steps[step_idx].action_string, 0, MAX_ACTION_STRING_LEN);
+            std::strncpy(active_recording_buffer.steps[step_idx].action_string, cmd_name.c_str(), MAX_ACTION_STRING_LEN - 1);
+            
+            active_recording_buffer.steps[step_idx].event_state = (uint8_t)event_state;
+            active_recording_buffer.steps[step_idx].delay_ms = (uint16_t)delta;
+            
+            esphome::id(macro_last_event_time).value() = now;
+            esphome::id(macro_step_counter).value() = step_idx + 1;
+            active_recording_buffer.total_steps = esphome::id(macro_step_counter).value();
+            
+            ESP_LOGI("MACRO_REC", "Inline Mirror Captured -> Step [%d]: %s (State: %d, Delay: %u ms)", 
+                     step_idx, cmd_name.c_str(), event_state, (unsigned int)delta);
+        }
+        
+        char virt_buf[32] = {0};
+        snprintf(virt_buf, sizeof(virt_buf), "Logged [%d]", esphome::id(macro_step_counter).value());
+        esphome::id(display_show).execute(false, cmd_name, "Recording...", std::string(virt_buf));
+    }
+
+    if (esphome::id(macro_playback_active).value()) return; 
+
+    // Update screen buffer display tracks
+    if (!is_token_clear_armed) {
+        esphome::id(action_string).value() = cmd_name;
+        if (get_bound_macro_slot(cmd_name.c_str()) != 255) {
+            esphome::id(action_string).value().append(" *");
+        } else if (event_state == KEY_EVENT_HOLDING && current_duration >= 4000) {
+            esphome::id(action_string).value().append(" [hold]");
+        } else if (event_state == KEY_EVENT_HOLDING) {
+            esphome::id(action_string).value().append(" ..");
+        }
+    }
+
+    if (esphome::id(showing_special_info).value()) {
+        esphome::id(showing_special_expiration_timer).execute();
+    } else {
+        char cmd_buf[32] = {0};
+        snprintf(cmd_buf, sizeof(cmd_buf), "0x%04X", (unsigned int)raw_ir_hex);
+        esphome::id(display_show).execute(false, esphome::id(action_string).value(), active_profile_workspace.profile_name, std::string(cmd_buf));
+    }
+
+    // ============================================================
+    // 3. LOW-LEVEL PROGRAMMATIC HARDWARE DRIVERS
+    // ============================================================
+    if (cmd_name == "power_off" || cmd_name == "power_on") {
+        if (event_state == KEY_EVENT_DOWN) {
+            auto* target_btn = resolve_button(cmd_name.c_str());
+            if (target_btn != nullptr) {
+                target_btn->press(); 
+            } else {
+                fire_bluetooth_hid_action(cmd_name.c_str(), event_state);
+            }
+        }
+        return; 
+    }
+
+    if (cmd_name == "token_sniff" && event_state == KEY_EVENT_DOWN) {
+        esphome::id(showing_special_info).value() = true;
+        esphome::id(sniffing_sequence).execute(); 
+        return;
+    } 
+    else if (cmd_name == "token_recall" && event_state == KEY_EVENT_DOWN) {
+        esphome::id(showing_special_info).value() = true;
+        esphome::id(execute_token_recall_routine).execute();
+        return;
+    } 
+    
+    // --- ARMED VERIFICATION GATEWAYS ---
+    if (is_token_clear_armed) {
+        if (cmd_name != "cursor_enter") {
+            if (event_state == KEY_EVENT_DOWN) {
+                esphome::id(token_clear_safety_timeout).stop(); 
+                esphome::id(global_token_clear_armed).value() = false;   
+                esphome::id(showing_special_info).value() = false;
+                esphome::id(display_show).execute(false, "Wipe Aborted", "Safety Disarmed", active_profile_workspace.profile_name);
+            }
+            return; 
+        }
+    }
+    else if (cmd_name == "token_clear" && event_state == KEY_EVENT_DOWN) {
+        esphome::id(global_token_clear_armed).value() = true;
+        esphome::id(token_clear_safety_timeout).execute(); 
+        esphome::id(showing_special_info).value() = true;
+        esphome::id(display_show).execute(false, "Token Clear", "Press OK (Enter)", "To Confirm...");
+        return;
+    }
+
+    if (cmd_name == "cursor_enter" && is_token_clear_armed && event_state == KEY_EVENT_DOWN) {
+        esphome::id(token_clear_safety_timeout).stop(); 
+        esphome::id(global_token_clear_armed).value() = false;   
+        esphome::id(showing_special_info).value() = true;
+        esphome::id(run_token_clear_worker).execute();   
+        return; 
+    }
+
+    // Standard low-level BLE report packet dispatch
+    fire_bluetooth_hid_action(cmd_name.c_str(), event_state);
+}
+
+
+// ====================================================================
+// UNIFIED TEXT-DRIVEN DECOUPLED STATE MACHINE ENGINE PIPELINE
+// Top-Level Iterative Dispatcher Layer (100% Recursion-Free)
+// ====================================================================
+inline void execute_action_pipeline(const std::string& cmd_name, int event_state, uint32_t raw_ir_hex = 0) {
+    
+    // --- ITERATIVE SYNTHETIC PACKET GENERATOR (WEB / TOUCH PANEL GATES) ---
+    if (raw_ir_hex == 0 && event_state == KEY_EVENT_DOWN) {
+        
+        // 🚀 THE ULTIMATE BLUEPRINT FIX: Identify infrastructure/state actions
+        bool is_state_infrastructure_key = (cmd_name == "macro_record" || 
+                                            cmd_name == "macro_play"   || 
+                                            cmd_name == "token_clear"  ||
+                                            cmd_name == "token_sniff"  ||
+                                            cmd_name == "token_recall" ||
+                                            esphome::id(macro_workflow_state).value() == MACRO_STATE_AWAITING_HOTKEY);
+
+        if (is_state_infrastructure_key) {
+            // FIRE EXACTLY ONCE AS A DISCRETE KEY_EVENT_DOWN STROKE. NO SYNTHETIC KEY_EVENT_UP GENERATED!
+            execute_action_pipeline_worker(cmd_name, KEY_EVENT_DOWN, 0xEFFF);
+            return;
+        }
+
+        // Standard pass-through buttons (like UP, DOWN) still use the safe discrete down/up sequence
+        execute_action_pipeline_worker(cmd_name, KEY_EVENT_DOWN, 0xEFFF);
+        vTaskDelay(pdMS_TO_TICKS(45));
+        execute_action_pipeline_worker(cmd_name, KEY_EVENT_UP, 0xEFFF);
+        return; 
+    }
+
+    // Pass physical IR remotes directly through to the tracking core exactly once
+    execute_action_pipeline_worker(cmd_name, event_state, raw_ir_hex);
+}
+
 
 
 
@@ -1767,7 +2128,7 @@ inline esp_err_t root_handler(httpd_req_t *req) {
 
     httpd_resp_send_chunk(req, BLE_REMOTE_NAME_STR "</h3>", HTTPD_RESP_USE_STRLEN);
 
-    int active_idx = esphome::id(active_remote_layout).value();
+    int active_idx = esphome::id(active_remote_profile).value();
     load_profile_to_workspace(active_idx);
     
     httpd_resp_send_chunk(req, "  <p style=\"font-size:var(--fs-sm);color:#8b949e;margin:0 0 15px\">Active Profile: <span style=\"color:#58a6ff;font-weight:bold\">", HTTPD_RESP_USE_STRLEN);
@@ -1972,7 +2333,6 @@ Use  </div>
 // HIGH-EFFICIENCY ZERO-ALLOCATION HTTP GET SELECT LAYOUT HANDLER
 // ====================================================================
 inline esp_err_t select_handler(httpd_req_t *req) {
-    // 256-byte stack-allocated query buffer is more than enough for URI params
     char query_buf[256];
     size_t buf_len = httpd_req_get_url_query_len(req) + 1;
 
@@ -1982,13 +2342,15 @@ inline esp_err_t select_handler(httpd_req_t *req) {
             if (httpd_query_key_value(query_buf, "slot", param, sizeof(param)) == ESP_OK) {
                 int chosen_slot = atoi(param);
 
-                // Commit slot indices straight to runtime globals
-                esphome::id(active_remote_layout).value() = chosen_slot;
+                esphome::id(active_remote_profile).value() = chosen_slot;
                 esphome::id(profile_has_been_stored).value() = 1; 
                 
                 load_profile_to_workspace(chosen_slot);
                 esphome::id(setup_ir_receiver_for_current_profile).execute();
                 
+                // standard baseline sync request
+                esphome::global_preferences->sync();
+
                 // Print execution state changes directly into stack log string 
                 char change_buf[96];
                 const char* kind = (chosen_slot < (int)factory_count) ? "internal" : "custom";
@@ -2025,7 +2387,7 @@ inline esp_err_t export_handler(httpd_req_t *req) {
     }
 
     // Capture operational layout state and load requested data targets
-    int current_active = esphome::id(active_remote_layout).value();
+    int current_active = esphome::id(active_remote_profile).value();
     load_profile_to_workspace(target_slot);
 
     const auto& p = active_profile_workspace;
@@ -2064,11 +2426,11 @@ inline esp_err_t export_handler(httpd_req_t *req) {
     char chunk_buf[256];
 
     // 1. Stream the META row directly
-    char addr_buf[16], arm_buf[16], fire_buf[16];
+    char addr_buf[16];
     snprintf(addr_buf, sizeof(addr_buf), addr_fmt, (unsigned int)p.device_address);
     
-    snprintf(chunk_buf, sizeof(chunk_buf), "META,%d,%s,%s,%s,%s,%s\n", 
-             target_slot, p.profile_name.c_str(), to_string(p.protocol), addr_buf, arm_buf, fire_buf);
+    snprintf(chunk_buf, sizeof(chunk_buf), "META,%d,%s,%s,%s\n", 
+             target_slot, p.profile_name.c_str(), to_string(p.protocol), addr_buf);
     httpd_resp_send_chunk(req, chunk_buf, strlen(chunk_buf));
 
     // 2. Stream key row allocations sequentially (0 heap allocation overhead)
@@ -2165,9 +2527,9 @@ inline esp_err_t import_handler(httpd_req_t *req) {
         int final_custom_slot = target_slot - (int)factory_count;
         if (final_custom_slot < 0 || final_custom_slot >= MAX_LEARNED_PROFILES) {
             final_custom_slot = 0; 
-            esphome::id(active_remote_layout).value() = (int)factory_count;
+            esphome::id(active_remote_profile).value() = (int)factory_count;
         } else {
-            esphome::id(active_remote_layout).value() = target_slot;
+            esphome::id(active_remote_profile).value() = target_slot;
         }
         
         commit_database_to_flash(final_custom_slot);
@@ -2501,47 +2863,81 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
             if (httpd_query_key_value(query_buf, "action", action_param, sizeof(action_param)) == ESP_OK) {
                 ESP_LOGI("WEB_CONSOLE", "Web Console Intercept: Firing Action Token '%s'", action_param);
                 
+                uint32_t workflow_state = esphome::id(macro_workflow_state).value();
+
                 // ====================================================================
-                // CENTRALIZED STATE ENGINE ROUTER (UNIFIED IR PATHWAY)
-                // Routes all macros, safety verification gates, and token actions
-                // straight into the low-level IR machine engine for identical processing.
+                // 1. MACRO RECORDING INFRASTRUCTURE PROTECTION SHIELD
+                // Blocks utility and Bluetooth infrastructure keys from entering macros.
+                // ====================================================================
+                if (workflow_state == MACRO_STATE_RECORDING) {
+                    if (std::strcmp(action_param, "token_sniff") == 0  || 
+                        std::strcmp(action_param, "token_recall") == 0 || 
+                        std::strcmp(action_param, "token_clear") == 0  ||
+                        std::strcmp(action_param, "macro_play") == 0   ||
+                        std::strcmp(action_param, "ble_pair") == 0     || 
+                        std::strcmp(action_param, "ble_clear") == 0) {   
+                        
+                        ESP_LOGW("WEB_CONSOLE", "Safety Intercept: Prohibited web action '%s' blocked while macro recording.", action_param);
+                        httpd_resp_set_status(req, "204 No Content");
+                        httpd_resp_send(req, NULL, 0);
+                        return ESP_OK;
+                    }
+                }
+
+                // ====================================================================
+                // 2. STATELESS UTILITY / SCRIPT ACTIONS (PURE BYPASS LAYERS)
+                // Executes native routines directly via text token matching.
+                // ====================================================================
+                if (std::strcmp(action_param, "token_sniff") == 0) {
+                    esphome::id(showing_special_info).value() = true;
+                    esphome::id(sniffing_sequence).execute();
+                    
+                    httpd_resp_set_status(req, "204 No Content");
+                    httpd_resp_send(req, NULL, 0);
+                    return ESP_OK;
+                }
+                else if (std::strcmp(action_param, "token_recall") == 0) {
+                    esphome::id(showing_special_info).value() = true;
+                    esphome::id(execute_token_recall_routine).execute();
+                    
+                    httpd_resp_set_status(req, "204 No Content");
+                    httpd_resp_send(req, NULL, 0);
+                    return ESP_OK;
+                }
+
+                // ====================================================================
+                // 2. STATE INTERCEPTOR ROUTER (PURE TEXT INJECTION VECTOR)
+                // Maps macros, confirmations, and script tokens purely as strings.
+                // Updated to evaluate LIVE global values to prevent asynchronous thread locks.
                 // ====================================================================
                 bool is_prefix_listening  = esphome::id(macro_play_prefix_active).value();
-                uint32_t workflow_state   = esphome::id(macro_workflow_state).value();
                 bool is_token_clear_armed = esphome::id(global_token_clear_armed).value(); 
-
+                
+                // Check the live global ID component state dynamically here
                 bool route_to_state_machine = is_prefix_listening || 
                                               is_token_clear_armed ||
-                                              (workflow_state == MACRO_STATE_RECORDING) || 
-                                              (workflow_state == MACRO_STATE_AWAITING_HOTKEY) ||
+                                              (esphome::id(macro_workflow_state).value() == MACRO_STATE_AWAITING_HOTKEY) || 
                                               (std::strcmp(action_param, "token_clear") == 0) ||
-                                              (std::strcmp(action_param, "token_sniff") == 0) || // Centralized 
-                                              (std::strcmp(action_param, "token_recall") == 0) || // Centralized
+                                              (std::strcmp(action_param, "token_sniff") == 0) || 
+                                              (std::strcmp(action_param, "token_recall") == 0) ||
                                               (std::strcmp(action_param, "macro_play") == 0) ||
                                               (std::strcmp(action_param, "macro_record") == 0);
-
+                
                 if (route_to_state_machine) {
-                    ESP_LOGD("WEB_CONSOLE", "Routing web action '%s' down central IR machine pipeline.", action_param);
+                    ESP_LOGD("WEB_CONSOLE", "Direct Pure-Text Injection routing active for: %s", action_param);
                     
-                    // Look up the simulated hex key map entry matching your active workspace profile
-                    uint32_t current_hex_mapping = find_active_command_by_name(action_param);
+                    // Route directly through the unified dispatcher to unpack DOWN/UP edge sequences
+                    execute_action_pipeline(action_param, KEY_EVENT_DOWN, 0); 
                     
-                    // Direct pass-through execution into your core physical remote processing sequence
-                    esphome::id(ir_map_processor).execute(current_hex_mapping, KEY_EVENT_DOWN);
-                    
-                    // Safety liftoff guard to prevent automated configuration browser lockups
                     if (esphome::id(macro_workflow_state).value() == MACRO_STATE_LIFTOFF_SHIELD) {
                         esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE;
-                        esphome::id(global_cached_command).value() = 0;
-                        esphome::id(global_initial_press_time).value() = 0;
-                        esphome::id(global_last_processed_time).value() = 0;
-                        esphome::id(global_is_holding).value() = false;
                     }
                 
                     httpd_resp_set_status(req, "204 No Content");
                     httpd_resp_send(req, NULL, 0);
                     return ESP_OK;
                 }
+
 
                 // Update physical screen details to log standard incoming command transitions
                 std::string resolved_display_str = std::string(action_param); 
@@ -2583,6 +2979,16 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                                               std::strcmp(action_param, "power_on") == 0);
 
                 if (is_monostable_web_key) {
+                    // If the system is actively recording a macro, block power on off execution immediately!
+                    if (esphome::id(macro_workflow_state).value() == MACRO_STATE_RECORDING) {
+                        if (std::strcmp(action_param, "power_on") == 0 || std::strcmp(action_param, "power_off") == 0) {
+                            ESP_LOGW("WEB_CONSOLE", "Safety Intercept: Power action '%s' blocked and ignored while macro recording.", action_param);
+                            httpd_resp_set_status(req, "204 No Content");
+                            httpd_resp_send(req, NULL, 0);
+                            return ESP_OK; // Exit immediately without pressing the button or recording a step
+                        }
+                    }
+
                     auto* target_btn = resolve_button(action_param);
                     if (target_btn != nullptr) {
                         target_btn->press(); 
@@ -2593,11 +2999,12 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                     
                     httpd_resp_set_status(req, "204 No Content");
                     httpd_resp_send(req, NULL, 0);
-                    return ESP_OK;
+                    return ESP_OK; 
                 }
 
                 // ====================================================================
                 // STANDARD PASS-THROUGH PIPELINE FOR STATELESS KEYS ONLY
+                // Updated to utilize the text pipeline so web console keys can be recorded.
                 // ====================================================================
                 if (std::strcmp(action_param, "power_off") != 0 && 
                     std::strcmp(action_param, "focus_manual") != 0 && 
@@ -2608,9 +3015,9 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
                     esphome::id(global_last_raw_packet_time).value() = millis();
                     esphome::id(global_cached_command).value() = simulated_hex;
                 
-                    fire_bluetooth_hid_action(action_param, KEY_EVENT_DOWN); 
-                    vTaskDelay(pdMS_TO_TICKS(25));              
-                    fire_bluetooth_hid_action(action_param, KEY_EVENT_UP); 
+                    // ROUTE THROUGH THE UNIFIED TEXT MACHINE PIPELINE
+                    // This unpacks the synthetic DOWN/UP edges and records your macro steps!
+                    execute_action_pipeline(action_param, KEY_EVENT_DOWN, 0); 
                 
                     esphome::id(global_cached_command).value() = 0;
                     esphome::id(global_initial_press_time).value() = 0;
@@ -2624,6 +3031,7 @@ inline esp_err_t button_inject_handler(httpd_req_t *req) {
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
+
 //===================================
 
 

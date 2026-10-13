@@ -7,7 +7,8 @@ substitutions:
   
   pin_ir_receiver: GPIO32   # IR sensor of M5stack Unit IR via a Grove HY2.0-4P interface white/RX wire
   pin_indicator_LED: GPIO27 # LED indicator
-  pin_action_btn: GPI39      # use front button for action on m5stack atom
+  pin_action_btn: GPIO39       # M5 stack front button for action
+  pin_action_btn_pullup: false # M5 stack has physical pullup resistor on front button.
   wifi_tx_power: "15dB"
   
   

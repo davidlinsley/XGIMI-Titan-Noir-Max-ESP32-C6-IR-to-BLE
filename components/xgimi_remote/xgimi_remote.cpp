@@ -97,7 +97,7 @@ void XgimiRemote::start_wake_burst() {
     ESP_LOGI(TAG, "Projector Power On ignored: wake burst is already in progress");
     return;
   }
-  this->set_advertised_name_(this->remote_name_.c_str());
+  this->set_advertised_name_(this->remote_name_.c_str()); 
   this->wake_counter_ = 0;
   this->wake_active_ = true;
   ESP_LOGI(TAG, "Starting XGIMI wake burst with no deliberate inter-value delay");

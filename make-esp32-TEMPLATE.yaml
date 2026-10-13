@@ -1,4 +1,4 @@
-# ============= BEGIN Configuration Options KUO ======================================================================
+# ============= BEGIN Main Configuration Options KUO ======================================================================
 
 # Three things must be configured here
 #   ble_remote_name
@@ -37,20 +37,21 @@ packages:
   # 3 =======  ESP32 board, Uncomment one (and only one) to specify board ===================
   
   hardware_package: !include ir-common-kuo/hardware-esp32-c3-0.42-OLED.yaml         # supports built-in 0.42 inch OLED display
-  #hardware_package: !include ir-common-kuo/hardware-esp32-c6-wroom-1.yaml            # recommend add external 0.9 inch i2c OLED display
-  #hardware_package: !include ir-common-kuo/hardware-waveshare-s3-lcd-1.47B.yaml     # Quirk: requires IR sensor WITHOUT LED (VS1838B)
-  #hardware_package: !include ir-common-kuo/hardware-heltec-hiletgo-s3-0.96-OLED-v3.yaml # Quirk: Needs special cable for serial logging
-  #hardware_package: !include ir-common-kuo/hardware-lafvintech-c6-lcd-1.47.yaml      # May need physical reset after flashing.
+  #hardware_package: !include ir-common-kuo/hardware-esp32-c6-wroom-1.yaml           # recommend add external 0.9 inch i2c OLED display
+  #hardware_package: !include ir-common-kuo/hardware-waveshare-s3-lcd-1.47B.yaml     # requires IR sensor WITHOUT LED (VS1838B)
+  #hardware_package: !include ir-common-kuo/hardware-heltec-hiletgo-s3-0.96-OLED-v3.yaml # needs special cable for logging
+  #hardware_package: !include ir-common-kuo/hardware-lafvintech-c6-lcd-1.47.yaml      # recommend physical reset after flashing.
   #hardware_package: !include ir-common-kuo/hardware-hosyond-s3-lcd-3.5-touch.yaml
   #hardware_package: !include ir-common-kuo/hardware-waveshare-c6-lcd-1.47.yaml
   #hardware_package: !include ir-common-kuo/hardware-waveshare-s3-touch-lcd-2.8.yaml
-  #hardware_package: !include ir-common-kuo/hardware-ideaspark-esp32-classic-OLED.yaml # Quirk: usb-micro cable, small RAM
-  #hardware_package: !include ir-common-kuo/hardware-m5stack-pico-d4-atom-lite.yaml  # supports external 0.9 inch i2c OLED display
+  #hardware_package: !include ir-common-kuo/hardware-ideaspark-esp32-classic-OLED.yaml # usb-micro cable, small RAM, noisy IR
+  #hardware_package: !include ir-common-kuo/hardware-ideaspark-esp32-classic-lcd-1.14.yaml # needs USB-c to USB-A cable to flash. Small RAM
+  #hardware_package: !include ir-common-kuo/hardware-m5stack-pico-d4-atom-lite.yaml  # add external 0.9 inch i2c OLED display
 
   #hardware_package: !include ir-common-kuo/HARDWARE.YAML # Or uncomment this line and replace HARDWARE.YAML with your file.
 
 
-# ====================== END Configuration Options KUO ======================================================
+# ====================== END Main Configuration Options KUO =================================================
 # Code after this point typically does not need to be changed.
 # ===========================================================================================================
 
@@ -58,8 +59,8 @@ packages:
   mrmachine_BLE_package:  !include ir-common-kuo/appkit/mrmachine_bluetooth_V1.0.0.yaml # required, heavily modified mrmachine BLE package
 
 logger:
-  level: DEBUG
-  #level: INFO
+  #level: DEBUG
+  level: INFO
     
 external_components:
 - source:
@@ -69,7 +70,7 @@ external_components:
 
 
 wifi:
-  # networks: []
+#  networks: []
   reboot_timeout: 13h
   output_power: ${wifi_tx_power}
   power_save_mode: NONE
@@ -86,27 +87,6 @@ wifi:
                          2,
                          current_ip);
 
-captive_portal:
-
-# ============================================================
-esp32:
-  partitions: ir-common-kuo/appkit/partitions.csv
-  framework:
-    type: esp-idf
-    sdkconfig_options:
-      CONFIG_BT_BLE_EST_LINK_CONN_NUM: "1"
-      CONFIG_BT_ACL_CONNECTIONS: "1"
-      
-      # ====== NEW HIGH-UTILITY MEMORY RECLAIMS ======
-      CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: "n"  # Forces internal ultra-fast RAM mapping
-      CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY: "y"       # Dynamically releases pairing context blocks to heap
-      CONFIG_BT_SMP_ENABLE: "y"                    # Required for your secure key exchange pairs
-      CONFIG_BT_BLE_SMP_ENABLE: "y"                # Keep this active for Xgimi handshake lines
-      
-      # ====== REMOVE ALL MULTI-DEVICE OVERHEAD ======
-      CONFIG_BT_BLE_MAX_ACT_PARAMS: "1"            # Drops background parallel device tracking down to 1
-
-
 # ============================================================
 esphome:
   name: ${device_name}
@@ -114,7 +94,7 @@ esphome:
   comment: ESP32 with XGIMI BLE Translator
   project:
     name: xgimi.titan-noir-esp32-ir-kuo
-    version: 26.10.12.1124
+    version: 26.10.13.0828
     
   includes:
     - <sstream>
@@ -125,18 +105,23 @@ esphome:
     - <cctype>
     - ir-common-kuo/appkit/ir_profile.h
 
-
   build_flags: 
-    - '-DBLE_REMOTE_NAME_STR=\"${ble_remote_name}\"'
-    
-    # Uncomment line(s) below to activate special options. Beware indentation alighnment when uncommenting.
+    # ============================================================
+    # Advanced options
+    # Uncomment line(s) below to activate special options. Just delete # to uncomment
 
-    #- '-DENABLE_GOOGLETV_BLE_CODES' # for Xgimi Horizon 20 and other GoogleTV projectors. (differs from Xgimi TNM whhic is AndroidTV)
+    #- '-DENABLE_GOOGLETV_BLE_CODES' # for Xgimi Horizon 20 and other GoogleTV. Leave commented for Titan Noir AndroidTV)
 
     #- '-DENABLE_GENERIC_POWER'      # use simple power on/off instead of Xgimi specific power sequences
 
     #- '-DENABLE_EXTRA_BUTTONS'      # add power user custom buttons
-# ========================================================================================================
+
+
+    # ============================================================
+    # Leave below two items uncommented.
+    - '-DBLE_REMOTE_NAME_STR=\"${ble_remote_name}\"'
+    - '-DWAKE_NAME_MACRO="${ble_remote_name}"'
+    # ============================================================
 
   on_boot:
 
@@ -252,8 +237,30 @@ esphome:
                   line2: ''
                   line3: ''
 
+# ============================================================
+preferences:
+  flash_write_interval: 5s # More quickly commits sniffed tokens to flash. Global data rarely changes.
 
-# ======================================
+captive_portal:
+
+esp32:
+  partitions: ir-common-kuo/appkit/partitions.csv
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_BLE_EST_LINK_CONN_NUM: "1"
+      CONFIG_BT_ACL_CONNECTIONS: "1"
+      
+      # ====== NEW HIGH-UTILITY MEMORY RECLAIMS ======
+      CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: "n"  # Forces internal ultra-fast RAM mapping
+      CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY: "y"        # Dynamically releases pairing context blocks to heap
+      CONFIG_BT_SMP_ENABLE: "y"                    # Required for your secure key exchange pairs
+      CONFIG_BT_BLE_SMP_ENABLE: "y"                # Keep this active for Xgimi handshake lines
+      
+      # ====== REMOVE ALL MULTI-DEVICE OVERHEAD ======
+      CONFIG_BT_BLE_MAX_ACT_PARAMS: "1"            # Drops background parallel device tracking down to 1
+
+# ============================================================
 api:
   encryption:
     key: !secret api_encryption_key
@@ -322,6 +329,11 @@ api:
 # ============================================================
 globals:
 
+  - id: default_profile # use to give lambdas easy access to default profile index.
+    type: int
+    restore_value: yes
+    initial_value: ${def_profile}
+
   - id: boot_hydration_latch
     type: bool
     initial_value: "false"
@@ -332,13 +344,9 @@ globals:
     initial_value: "false"
     restore_value: no
   
-  - id: default_profile
-    type: int
-    initial_value: ${def_profile}
-
   - id: selected_profile_slot # Avalones ---------------
     type: int
-    restore_value: yes          # test
+    restore_value: no          # test
     initial_value: '0'          # 0 = first internal profile (LG-cinebeam-hu810p)
 
   - id: last_active_idx_seen # Avalones ---------------
@@ -414,7 +422,7 @@ text_sensor:
     id: ir_active_profile_ts
     # ...
     lambda: |-
-      int idx = id(active_remote_layout);
+      int idx = id(active_remote_profile);
       int total_valid_slots = static_cast<int>(factory_count) + MAX_LEARNED_PROFILES;
       static char buf[128]; // Stack allocation prevents heap reallocation
       
@@ -446,7 +454,7 @@ binary_sensor:
       inverted: true
       mode:
         input: true
-        pullup: true
+        pullup: ${pin_action_btn_pullup}
     name: "Action Button"
     id: action_button
 
@@ -1015,7 +1023,7 @@ script:
           }
           if (!token_hex_str.empty()) token_hex_str.pop_back();
           
-          int current_idx = id(active_remote_layout);
+          int current_idx = id(active_remote_profile);
           
           // FIXED: Check against pure integer math limits instead of proxy structure arrays
           int total_valid_slots = static_cast<int>(factory_count) + MAX_LEARNED_PROFILES;
@@ -1070,9 +1078,9 @@ select:
 
             id(selected_profile_slot) = extracted_idx;
 
-            int cur = id(active_remote_layout);
+            int cur = id(active_remote_profile);
             if (cur != extracted_idx) {
-              id(active_remote_layout) = extracted_idx;
+              id(active_remote_profile) = extracted_idx;
               
               // 1. Hydrate the active workspace container state immediately
               load_profile_to_workspace(extracted_idx);
@@ -1181,7 +1189,7 @@ interval:
                 }
           
                 // Restore runtime workspace configuration cleanly for the active layout index
-                int current_boot_layout_idx = id(active_remote_layout);
+                int current_boot_layout_idx = id(active_remote_profile);
                 load_profile_to_workspace(current_boot_layout_idx);
           
                 // Reconstruct native pointer tables array smoothly
