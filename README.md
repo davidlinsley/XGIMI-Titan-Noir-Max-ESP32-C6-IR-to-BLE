@@ -229,6 +229,14 @@ Such tiny boards do the job and provide good feedback via OLED display. Flexible
 
 <img width="1000" height="743" alt="ESP32 C3 with IR sensor" src="https://github.com/user-attachments/assets/9f39a4ef-bfd0-496b-b69d-b79c36f6db5b" />
 
+M5 Stack Atom Lite is a no-solder solution. You can simply plug in a 0.91 inch OLED display and M5Stack Mini Infrared Emitter and Receiver Unit.
+OLED 128 x 23 Display Module 0.91 Inch, I2C, SSD1306 Driver board has pinout that plugs directly into 4 pin J2 Grove connector of Atom Lite.
+
+<img width="800" height="567" alt="m5stack atom lite" src="https://github.com/user-attachments/assets/7b746df1-f8bb-4e08-961b-8e0655e8cd51" />
+
+
+
+
 
 ## Powering Your ESP32 Board
 
