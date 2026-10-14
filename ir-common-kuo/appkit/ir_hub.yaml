@@ -1572,7 +1572,7 @@ interval:
   # ====================================================================
   # TIMER 2: True One-Shot Post-Boot Storage Recovery & Workspace Hydration
   # ====================================================================
-  - interval: 1.0sec 
+  - interval: 1.5sec 
     id: boot_initialization_timer 
     then:
       - lambda: |-
@@ -1580,7 +1580,7 @@ interval:
           ESP_LOGI("ir_hub", "Executing secure unified workspace hydration pass...");
           
           // active_remote_profile is restored from NVRAM at boot
-          // Zero indicates either AWOL or fresh NVRAM. Test whether fresh NVRAM by also looking at profile_has_been_stored
+          // Zero indicates either AWOL or fresh NVRAM. Test whether fresh NVRAM by also retrieving profile_has_been_stored
 
           int boot_idx = id(active_remote_profile);
 

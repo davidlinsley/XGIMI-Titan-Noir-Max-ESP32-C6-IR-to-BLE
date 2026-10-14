@@ -10,6 +10,7 @@
 # to GPIO2 which is also display dc_pin that continually lights up blue LED.
 #
 # RAM extremely limited. We reduce display bit depth and limit fonts to mitigate.
+# Only ESP32 board I have encountered that maintains logging through a boot cycle.
  
 # ============= BEGIN Configuration Options KUO ==========
 

@@ -2,13 +2,13 @@
 
 substitutions:
   
-  # M5stacks own IR Unit IR SKU:U002 has IR receiver and emitter compatible with Grove connector of Atom Lite
-  # If using other IR sensor, beware that Grove connector Vcc is 5 volts. Connector J4 supplies safer 3 volt Vcc.
+  # M5stack IR Unit IR SKU:U002 has IR receiver and emitter compatible with end HY2.0-4P connector of Atom Lite
+  # If using other IR sensor, beware that HY2.0-4P connector Vcc is 5 volts. Connector J4 supplies safer 3 volt Vcc.
   
   pin_ir_receiver: GPIO32   # IR sensor of M5stack Unit IR via a Grove HY2.0-4P interface white/RX wire
   pin_indicator_LED: GPIO27 # LED indicator
   pin_action_btn: GPIO39       # M5 stack front button for action
-  pin_action_btn_pullup: false # M5 stack has physical pullup resistor on front button.
+  pin_action_btn_pullup: false # M5 stack has physical pullup resistor for front button.
   wifi_tx_power: "15dB"
   
   
@@ -19,11 +19,15 @@ esp32:
   framework:
     type: esp-idf
       
-  
-# i2c Display Pins
+
+# Optional 0.9 inch i2c OLED display on 4 pin J2 Grove Connector
+# display sda to GPIO21
+# display scl to GPIO25
+# display Vcc to 5V
+# display GND to GND
 i2c: 
-  sda: GPIO25 # optional OLED
-  scl: GPIO21 # optional OLED
+  sda: GPIO21
+  scl: GPIO25
   frequency: 400kHz
   scan: false # to prevent startup crashes during boot scans
   id: bus_a
