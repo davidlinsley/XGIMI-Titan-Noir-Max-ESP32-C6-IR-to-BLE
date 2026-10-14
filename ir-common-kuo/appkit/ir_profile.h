@@ -115,15 +115,15 @@ inline constexpr size_t TOTAL_SYSTEM_BUTTONS = sizeof(learn_button_names) / size
 // ====================================================================
 // Macro storage STRUCTS
 // ====================================================================
-#define MAX_MACRO_STEPS    64  
+#define MAX_MACRO_STEPS    32  
 #define MAX_BOUND_HOTKEYS  9  
-#define CURRENT_MACRO_VERSION  9
+#define CURRENT_MACRO_VERSION  10
 
 
 struct UniversalMacroStep {
   char action_string[MAX_ACTION_STRING_LEN]; 
-  uint8_t event_state;    // 0 = DOWN, 2 = UP                  
-  uint16_t delay_ms;      // Pacing interval
+  uint16_t delay_before_down_ms; // Duration from previous event to current DOWN stroke
+  uint16_t hold_duration_ms;     // Duration from current DOWN stroke to matching UP edge
 };
 
 struct UniversalFlashMacro {
@@ -1623,7 +1623,7 @@ inline void execute_action_pipeline_worker(const std::string& cmd_name, int even
                 esphome::id(display_show).execute(false, "Assignment Error", "Invalid Key Destination", "Action Mode"); 
                 esphome::id(macro_recording_active).value() = false;
                 esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE; 
-                esphome::id(macro_indicator_end).execute(); 
+                esphome::id(macro_indicator_clear_all).execute(); 
                 return; 
             }
         
@@ -1647,7 +1647,7 @@ inline void execute_action_pipeline_worker(const std::string& cmd_name, int even
             
             if (match_idx == -1) {
                 ESP_LOGE("MACRO_WORKFLOW", "Registry overflow! Absolute memory ceiling of %d hotkeys reached.", MAX_BOUND_HOTKEYS);
-                esphome::id(macro_indicator_end).execute(); 
+                esphome::id(macro_indicator_clear_all).execute(); 
                 esphome::id(macro_workflow_state).value() = MACRO_STATE_IDLE;
                 return;
             }
@@ -1659,7 +1659,7 @@ inline void execute_action_pipeline_worker(const std::string& cmd_name, int even
             
             esphome::id(commit_macro_to_flash_slot).execute(target_shared_slot); 
             esphome::id(save_binding_registry_to_nvs).execute(); 
-            esphome::id(macro_indicator_end).execute(); 
+            esphome::id(macro_indicator_clear_all).execute(); 
       
             char slot_msg_buf[32];
             char key_msg_buf[48];
@@ -1760,69 +1760,76 @@ inline void execute_action_pipeline_worker(const std::string& cmd_name, int even
     }
 
     // ====================================================================
-    // 2. PASSIVE MID-STREAM CAPTURE REGISTRATION PIPELINE
-    // Safely positioned at the bottom so utility/stop keys exit before this runs.
+    // 2. PASSIVE MID-STREAM CAPTURE REGISTRATION PIPELINE (PRE-DELAY / HOLD)
     // ====================================================================
     if (workflow_state == MACRO_STATE_RECORDING) {
         esphome::id(macro_record_timeout_watcher).execute(); 
 
-        // Completely isolates macro utility controls from entering validation checks or buffers.
         if (cmd_name == "macro_record" || cmd_name == "macro_play" || 
             cmd_name == "power_on"     || cmd_name == "power_off") {
-            return; // Exit silently—never record or throw a warning for macro state or power keys!
+            return; 
         }
 
         if (!is_action_allowed_as_macro_hotkey(cmd_name.c_str())) {
-            // Temporarily take over display status to flag the rejection cleanly
             esphome::id(showing_special_info).value() = true;
             esphome::id(display_show).execute(false, "Key Prohibited", cmd_name, "Skipping Step...");
-            esphome::id(showing_special_expiration_timer).execute(); // Safe auto-clear after 4s
-            
-            return; // 🚀 OPERATIONAL FIX: Terminate function here so lower display logic is ignored
+            esphome::id(showing_special_expiration_timer).execute();
+            return; 
         }
 
         int step_idx = esphome::id(macro_step_counter).value();
 
-        if (event_state != KEY_EVENT_HOLDING && step_idx < MAX_MACRO_STEPS) {
-            if (event_state == KEY_EVENT_UP && step_idx > 0 && 
-                active_recording_buffer.steps[step_idx - 1].event_state == KEY_EVENT_UP &&
-                (now - esphome::id(macro_last_event_time).value() < 45)) {
-                return;
-            }
+        // --- Handle Button Initial Press ---
+        if (event_state == KEY_EVENT_DOWN) {
+            if (step_idx >= MAX_MACRO_STEPS) return;
 
-            uint32_t delta = 0;
-            if (step_idx > 0) {
-                if (event_state == KEY_EVENT_UP) {
-                    if (cmd_name == "power_off") {
-                        delta = 1500; 
-                    } else {
-                        uint32_t true_hold = now - esphome::id(macro_last_event_time).value();
-                        delta = (true_hold < 450) ? 50 : true_hold;
-                    }
-                } else {
-                    delta = now - esphome::id(macro_last_event_time).value();
-                    if (delta < 200) delta = 200;
-                }
-                if (delta > 65535) delta = 65535;
-            }
-
+            // Initialize the step array row item
             std::memset(active_recording_buffer.steps[step_idx].action_string, 0, MAX_ACTION_STRING_LEN);
             std::strncpy(active_recording_buffer.steps[step_idx].action_string, cmd_name.c_str(), MAX_ACTION_STRING_LEN - 1);
-            
-            active_recording_buffer.steps[step_idx].event_state = (uint8_t)event_state;
-            active_recording_buffer.steps[step_idx].delay_ms = (uint16_t)delta;
-            
-            esphome::id(macro_last_event_time).value() = now;
-            esphome::id(macro_step_counter).value() = step_idx + 1;
-            active_recording_buffer.total_steps = esphome::id(macro_step_counter).value();
-            
-            ESP_LOGI("MACRO_REC", "Inline Mirror Captured -> Step [%d]: %s (State: %d, Delay: %u ms)", 
-                     step_idx, cmd_name.c_str(), event_state, (unsigned int)delta);
+            active_recording_buffer.steps[step_idx].delay_before_down_ms = 0; // Forced default for step 0
+            active_recording_buffer.steps[step_idx].hold_duration_ms = 0;
+
+            // --- CRITICAL RULE: First step pre-delay always set to be zero ---
+            if (step_idx > 0 && esphome::id(macro_last_event_time).value() > 0) {
+                uint32_t pre_delta = now - esphome::id(macro_last_event_time).value();
+                if (pre_delta > 65535) pre_delta = 65535;
+                active_recording_buffer.steps[step_idx].delay_before_down_ms = (uint16_t)pre_delta;
+            }
+
+            // Anchor current timeline spot to track hold edge intervals accurately
+            esphome::id(macro_last_event_time).value() = now; 
+        }
+        
+        // --- Handle Button Liftoff Release ---
+        else if (event_state == KEY_EVENT_UP) {
+            // Verify structural order: match up to current active key step name string arrays
+            if (step_idx < MAX_MACRO_STEPS && 
+                std::strcmp(active_recording_buffer.steps[step_idx].action_string, cmd_name.c_str()) == 0) {
+                
+                uint32_t active_hold = now - esphome::id(macro_last_event_time).value();
+                if (active_hold < 50) active_hold = 50; // Enforce hardware debouncing minimum thresholds
+                if (active_hold > 65535) active_hold = 65535;
+                
+                active_recording_buffer.steps[step_idx].hold_duration_ms = (uint16_t)active_hold;
+                
+                // Save current timestamp marker so the NEXT button's pre-delay knows where this key ended
+                esphome::id(macro_last_event_time).value() = now; 
+                
+                ESP_LOGI("MACRO_REC", "Logged Step [%d]: %s (Pre-Delay: %ums, Held: %ums)", 
+                         step_idx, cmd_name.c_str(), 
+                         active_recording_buffer.steps[step_idx].delay_before_down_ms, 
+                         active_recording_buffer.steps[step_idx].hold_duration_ms);
+                
+                // Commit index increments only after down-up loops fully lock down
+                esphome::id(macro_step_counter).value() = step_idx + 1;
+                active_recording_buffer.total_steps = esphome::id(macro_step_counter).value();
+            }
         }
         
         char virt_buf[32] = {0};
         snprintf(virt_buf, sizeof(virt_buf), "Logged [%d]", esphome::id(macro_step_counter).value());
         esphome::id(display_show).execute(false, cmd_name, "Recording...", std::string(virt_buf));
+        return;
     }
 
     if (esphome::id(macro_playback_active).value()) return; 
@@ -2222,7 +2229,7 @@ inline esp_err_t root_handler(httpd_req_t *req) {
     <button class="btn-test util" onclick="sendClick('token_clear')">Token CLEAR</button>
     <button class="btn-test util" onclick="sendClick('token_recall')">Token RECALL</button>
     <button class="btn-test ble"  onclick="sendClick('ble_clear')">BLE CLEAR</button>
-Use  </div>
+  </div>
 </div>
 )rawliteral", HTTPD_RESP_USE_STRLEN); // <-- This safely closes Chunk 2
 
@@ -2359,6 +2366,17 @@ inline esp_err_t select_handler(httpd_req_t *req) {
                 snprintf(change_buf, sizeof(change_buf), "idx=%d  %.48s  [%s]",
                          chosen_slot, active_profile_workspace.profile_name.c_str(), kind);
                 esphome::id(ir_active_profile_ts).publish_state(change_buf);
+                
+                // Show on display
+                esphome::id(showing_special_info).value() = true; // Engage special panel mask lock
+                esphome::id(display_show).execute(
+                    true, 
+                    "Web Set Profile", 
+                    active_profile_workspace.profile_name, 
+                    "Action Mode"
+                );
+                esphome::id(showing_special_expiration_timer).execute(); // Automatically clear back to idle in 4s
+                 
             }
         }
     }
@@ -2577,8 +2595,8 @@ inline std::string generate_macro_csv() {
             std::memset(chunk, 0, sizeof(chunk));
             
             // STREAMLINED: Drops the old type column cell
-            snprintf(chunk, sizeof(chunk), "step,%s,%s,%u\n", 
-                     step.action_string, state_to_str(step.event_state), step.delay_ms);
+            snprintf(chunk, sizeof(chunk), "step,%s,%u,%u\n", 
+              step.action_string, step.delay_before_down_ms, step.hold_duration_ms);
             csv_out += chunk;
         }
     }
@@ -2628,10 +2646,11 @@ inline esp_err_t export_macro_text_handler(httpd_req_t *req) {
         }
         httpd_resp_send_chunk(req, chunk_buf, strlen(chunk_buf));
 
+        // 🛠️ VERIFIED: Outputs exactly 4 data cells per step row matching your rule layout
         for (uint16_t i = 0; i < macro_buf.total_steps; i++) {
             const auto& step = macro_buf.steps[i];
-            snprintf(chunk_buf, sizeof(chunk_buf), "step,%s,%s,%u\n", 
-                     step.action_string, state_to_str(step.event_state), step.delay_ms);
+            snprintf(chunk_buf, sizeof(chunk_buf), "step,%s,%u,%u\n", 
+                     step.action_string, step.delay_before_down_ms, step.hold_duration_ms);
             httpd_resp_send_chunk(req, chunk_buf, strlen(chunk_buf));
         }
     }
@@ -2644,7 +2663,6 @@ inline esp_err_t export_macro_text_handler(httpd_req_t *req) {
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
-
 
 // ====================================================================
 // ZERO-HEAP IN-PLACE TEXT TOKENIZATION CSV MACRO DEPLOYMENT ENGINE
@@ -2695,20 +2713,17 @@ inline bool import_macro_from_csv(const std::string& csv_data) {
 
         std::string_view cell_type = get_next_cell(line_view);
 
-        // -----------------------------------------------------------
-        // METADATA WORKFLOW DEFINITION PASS (Handles MACRO or macro)
-        // -----------------------------------------------------------
+        // --- Metadata Workflow Definition Block ---
         if (cell_type == "MACRO" || cell_type == "macro") {
-            save_active_macro(); // Flush any previously collected macro steps to flash before switching slots
+            save_active_macro(); 
             
             std::string_view label_view = get_next_cell(line_view);
-            active_slot = -1; // Reset tracking pointer
+            active_slot = -1; 
         
             if (!label_view.empty()) {
                 char search_name[MAX_ACTION_STRING_LEN] = {0};
                 std::memcpy(search_name, label_view.data(), std::min(label_view.size(), sizeof(search_name) - 1));
         
-                // Resolve slot target via active hotkey action string matches
                 for (uint16_t b = 0; b < global_binding_registry.total_bound_keys; b++) {
                     if (std::strcmp(global_binding_registry.bindings[b].action_string, search_name) == 0) {
                         active_slot = global_binding_registry.bindings[b].shared_macro_slot;
@@ -2716,7 +2731,6 @@ inline bool import_macro_from_csv(const std::string& csv_data) {
                     }
                 }
         
-                // --- NEW RESILIENT FALLBACK: Auto-resolve raw named hotkeys if registry is empty ---
                 if (active_slot == -1) {
                     if (std::strcmp(search_name, "cursor_enter") == 0)      active_slot = 0;
                     else if (std::strcmp(search_name, "cursor_up") == 0)    active_slot = 1;
@@ -2729,12 +2743,10 @@ inline bool import_macro_from_csv(const std::string& csv_data) {
                     else if (std::strcmp(search_name, "shortcut_4") == 0)   active_slot = 8;
                 }
         
-                // Legacy Fallback Check
                 if (active_slot == -1 && std::strncmp(search_name, "Macro_Slot_", 11) == 0) {
                     active_slot = std::atoi(search_name + 11);
                 }
         
-                // Re-inject the mapping back into the runtime registry directory so they remain cross-profile linked
                 if (active_slot >= 0 && active_slot < MAX_BOUND_HOTKEYS) {
                     int entry_idx = -1;
                     for (uint16_t b = 0; b < global_binding_registry.total_bound_keys; b++) {
@@ -2758,25 +2770,31 @@ inline bool import_macro_from_csv(const std::string& csv_data) {
             std::memset(&macro_build, 0, sizeof(macro_build));
             macro_build.struct_version = CURRENT_MACRO_VERSION; 
         }
-        // -----------------------------------------------------------
-        // HARDWARE DATA KEY EXTRAPOLATION PASS (Handles STEP or step)
-        // -----------------------------------------------------------
+        
+        // --- 🛠️ VERIFIED: Extraction Path for 4-Column Step Arrays ---
         else if (cell_type == "step" || cell_type == "STEP") {
             if (active_slot == -1 || macro_build.total_steps >= MAX_MACRO_STEPS) continue;
             
             std::string_view payload_view = get_next_cell(line_view); 
-            std::string_view state_view   = get_next_cell(line_view);
-            std::string_view delay_view   = get_next_cell(line_view);
+            std::string_view pre_delay_view = get_next_cell(line_view);
+            std::string_view hold_time_view = get_next_cell(line_view);
         
             auto& step = macro_build.steps[macro_build.total_steps];
             
-            char state_tmp[16] = {0};
-            std::memcpy(state_tmp, state_view.data(), std::min(state_view.size(), sizeof(state_tmp) - 1));
-            step.event_state = str_to_state(state_tmp);
+            // Extract Pre-delay value cell
+            char pre_tmp[16] = {0};
+            std::memcpy(pre_tmp, pre_delay_view.data(), std::min(pre_delay_view.size(), sizeof(pre_tmp) - 1));
+            step.delay_before_down_ms = std::strtoul(pre_tmp, nullptr, 10);
+            
+            // --- CRITICAL FIRST STEP RULE INFORCED ON WEBSERVER CAPTURES ---
+            if (macro_build.total_steps == 0) {
+                step.delay_before_down_ms = 0;
+            }
         
-            char delay_tmp[16] = {0};
-            std::memcpy(delay_tmp, delay_view.data(), std::min(delay_view.size(), sizeof(delay_tmp) - 1));
-            step.delay_ms = std::strtoul(delay_tmp, nullptr, 10);
+            // Extract Hold duration value cell
+            char hold_tmp[16] = {0};
+            std::memcpy(hold_tmp, hold_time_view.data(), std::min(hold_time_view.size(), sizeof(hold_tmp) - 1));
+            step.hold_duration_ms = std::strtoul(hold_tmp, nullptr, 10);
         
             std::memset(step.action_string, 0, MAX_ACTION_STRING_LEN);
             std::memcpy(step.action_string, payload_view.data(), std::min(payload_view.size(), MAX_ACTION_STRING_LEN - 1));

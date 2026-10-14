@@ -425,27 +425,56 @@ script:
   # ====================================================================
   # Centralized Projector Macro Session Status Indicators
   # ====================================================================
-  - id: macro_indicator_start
-    mode: restart
-    then:
-      - lambda: |-
-          // 🛠️ FIXED: Arrow pointer notation used for cross-compiled hardware execution script paths
-          id(turn_led_on_custom)->execute(0.3f, 1.0f, 0.2f, 0.8f); 
-          
-          ESP_LOGI("MACRO_INDICATOR", "Projector notification: Session opened.");
-          fire_bluetooth_hid_action("volume_up", KEY_EVENT_DOWN);
-          vTaskDelay(pdMS_TO_TICKS(50));
-          fire_bluetooth_hid_action("volume_up", KEY_EVENT_UP);
 
-  - id: macro_indicator_end
+  # RECORDING MODE PROFILE: Smooth 1.2-Second Breath Pulse
+  - id: macro_indicator_recording
+    mode: restart
+    then: 
+      - while: 
+          condition:
+            lambda: 'return true;'
+          then:
+            # Keep your standard smooth 400ms transition values
+            - lambda: 'id(turn_led_on_custom)->execute(1.0f, 0.0f, 0.0f, 0.4f);' 
+            - delay: 500ms
+            - lambda: 'id(turn_led_off_custom)->execute();' 
+            - delay: 700ms
+
+  # AWAITING HOTKEY SELECTION PROFILE: High-Velocity 30ms Hardware Strobe Alert
+  - id: macro_indicator_awaiting_hotkey
+    mode: restart
+    then: 
+      - script.stop: macro_indicator_recording
+      - while: 
+          condition:
+            lambda: 'return true;'
+          then:
+            # Calls remain uniform across all physical architectures!
+            - lambda: 'id(turn_led_on_custom)->execute(1.0f, 0.8f, 0.0f, 1.0f);' 
+            - delay: 30ms
+            - lambda: 'id(turn_led_off_custom)->execute();' 
+            - delay: 30ms
+
+  # ACTIVE PLAYBACK RUNNER PROFILE: Static Solid Green Glow
+  - id: macro_indicator_playback
     mode: restart
     then:
       - lambda: |-
-          // 🛠️ FIXED: Arrow pointer notation used cleanly for execution pathing
+          id(macro_indicator_recording)->stop();
+          id(macro_indicator_awaiting_hotkey)->stop();
+          id(turn_led_on_custom)->execute(0.0f, 1.0f, 0.2f, 0.8f); 
+
+  # TERMINATE ALL WINDOWS PROFILE: Absolute Black Fallback Shut Down
+  - id: macro_indicator_clear_all
+    mode: single
+    then:
+      - lambda: |-
+          id(macro_indicator_recording)->stop();
+          id(macro_indicator_awaiting_hotkey)->stop();
+          id(macro_indicator_playback)->stop();
           id(turn_led_on_custom)->stop();
-          id(turn_led_off_custom)->execute();
-      
-          ESP_LOGI("MACRO_INDICATOR", "Projector notification: Session finalized/aborted.");
+          id(turn_led_off_custom)->execute(); 
+      - lambda: |-
           fire_bluetooth_hid_action("volume_down", KEY_EVENT_DOWN);
           vTaskDelay(pdMS_TO_TICKS(50));
           fire_bluetooth_hid_action("volume_down", KEY_EVENT_UP);
@@ -511,8 +540,14 @@ script:
             return;
           }
 
-      - script.execute: macro_indicator_start
+      # --- AUDIO SIGNATURE START: Pulse volume up immediately via BLE stack ---
+      - lambda: |-
+          fire_bluetooth_hid_action("volume_up", KEY_EVENT_DOWN);
+          vTaskDelay(pdMS_TO_TICKS(50));
+          fire_bluetooth_hid_action("volume_up", KEY_EVENT_UP);
 
+      - script.execute: macro_indicator_recording #Activate recording breath loop
+      
       - lambda: |-
 
           // 2. Initialize tracking parameters and clear out our global RAM buffer workspace
@@ -549,16 +584,14 @@ script:
               id(display_show)->execute(false, "Record Canceled", "No actions pressed", "Action Mode");
               ESP_LOGW("MACRO_WORKFLOW", "No keys were captured during the session. Aborting macro recording.");
           
-              // indicate immediate empty abort
-              id(macro_indicator_end)->execute();
+              // Call the termination engine directly to drop colors and execute volume_down
+              id(macro_indicator_clear_all)->execute(); 
               return;
             }
 
             id(macro_workflow_state) = MACRO_STATE_AWAITING_HOTKEY; 
+            id(macro_indicator_awaiting_hotkey)->execute(); // 🟡 Shift to rapid amber alert
             id(display_show)->execute(false, "Assign Hotkey", "Click desired button", "");
-            ESP_LOGW("MACRO_WORKFLOW", "Actions successfully cached (%d steps). Awaiting button to bind.", id(macro_step_counter));
-          } else {
-            ESP_LOGW("MACRO_WORKFLOW", "End command ignored: System is not actively recording a session.");
           }
 
   # ====================================================================
@@ -608,7 +641,7 @@ script:
     mode: restart
     then: 
       - delay: 60s
-      - lambda: !lambda |-
+      - lambda: |-
           // If the system is still stuck in recording mode after 60s, abort it
           if (id(macro_workflow_state) == MACRO_STATE_RECORDING) {
             ESP_LOGW("MACRO_WORKFLOW", "Macro recording timed out due to inactivity. Reverting to idle.");
@@ -622,8 +655,8 @@ script:
             id(showing_special_info) = true;
             id(display_show)->execute(false, "Record Timeout", "Inactivity Abort", "Action Mode");
             
-            // Shut down status LEDs and sends volume_down pulse via single execution
-            id(macro_indicator_end)->execute();
+            // Use consolidated termination script
+            id(macro_indicator_clear_all)->execute();
           }
 
   # ====================================================================
@@ -647,13 +680,12 @@ script:
             id(showing_special_info) = true;
             id(display_show)->execute(false, "Assign Timeout", "Macro Canceled", "Action Mode");
             
-            // Shut down status LEDs and sends volume_down pulse via single execution
-            id(macro_indicator_end)->execute();
+            // Use consolidated termination script
+            id(macro_indicator_clear_all)->execute();
           }
 
-
   # ====================================================================
-  # WATCHDOG-SAFE COOPERATIVE ASYNCHRONOUS PLAYBACK ENGINE (LONG-HOLD EDITIONS)
+  # WATCHDOG-SAFE COOPERATIVE ASYNCHRONOUS PLAYBACK ENGINE (STEP TRACKER)
   # ====================================================================
   - id: play_universal_shared_macro
     parameters:
@@ -678,10 +710,12 @@ script:
 
           ESP_LOGI("MACRO_PLAY", "Starting Asynchronous Playback for Slot %d (%d steps cached)...", shared_slot_id, active_recording_buffer.total_steps);          
           id(showing_special_info) = true;
-          id(display_show)->execute(false, "Macro Playing...", std::to_string(shared_slot_id), "Please wait...");
-
-          id(macro_step_counter) = 0;
           
+          // Prime the counter variables natively
+          id(macro_step_counter) = 0;
+
+      - script.execute: macro_indicator_playback # 🟢 Light up solid green on playback start
+
       - while:
           condition:
             lambda: |-
@@ -689,27 +723,57 @@ script:
               return (id(macro_step_counter) < active_recording_buffer.total_steps);
           then:
             # ============================================================
-            # STEP A: DYNAMIC PACING & KEEP-ALIVE COMPILER HOLD LOGIC
+            # USER EXPERIENE FACTOR: DYNAMIC SCREEN PROGRESS TRACKER
+            # ============================================================
+            - lambda: |-
+                extern UniversalFlashMacro active_recording_buffer;
+                int current_step_num = id(macro_step_counter) + 1; // 1-based index for human readability
+                int total_steps_count = active_recording_buffer.total_steps;
+                
+                char step_counter_buf[32];
+                snprintf(step_counter_buf, sizeof(step_counter_buf), "Step %d / %d", current_step_num, total_steps_count);
+                
+                // Pushes real-time progress text onto the second line of the OLED frame buffer
+                id(display_show)->execute(false, "Macro Playing...", step_counter_buf, "Please wait...");
+
+            # ============================================================
+            # STEP A: CALCULATE AND WAIT FOR PRE-DELAY METRICS
             # ============================================================
             - lambda: |-
                 extern UniversalFlashMacro active_recording_buffer;
                 int idx = id(macro_step_counter);
-                uint32_t raw_delay = active_recording_buffer.steps[idx].delay_ms;
+                id(macro_last_event_time) = active_recording_buffer.steps[idx].delay_before_down_ms;
+                ESP_LOGD("MACRO_PLAY", "Pacing Step [%d] -> Holding Pre-Delay gap budget: %u ms", idx, (unsigned int)id(macro_last_event_time));
 
-                id(macro_last_event_time) = raw_delay;
-                ESP_LOGD("MACRO_PLAY", "   -> Step [%d]: Total delay budget: %ums", idx, (unsigned int)raw_delay);
+            - delay: !lambda "return id(macro_last_event_time);"
 
-            # If the current step is a release (UP) edge following a press (DOWN) edge,
-            # we evaluate if the duration qualifies as a sustained hold (> 400 ms).
+            # ============================================================
+            # STEP B: EXECUTE KEY DOWN EDGE STROKE
+            # ============================================================
+            - lambda: |-
+                extern UniversalFlashMacro active_recording_buffer;
+                int idx = id(macro_step_counter);
+                const auto& step = active_recording_buffer.steps[idx];
+
+                ESP_LOGI("MACRO_PLAY", "Firing Step [%d]: DOWN -> '%s' (Hold Window: %ums)", idx, step.action_string, step.hold_duration_ms);
+                
+                if (std::strcmp(step.action_string, "power_on") == 0) {
+                  id(power_on).press();
+                } else if (std::strcmp(step.action_string, "power_off") == 0) {
+                  id(power_off).press();
+                } else {
+                  fire_bluetooth_hid_action(step.action_string, KEY_EVENT_DOWN); 
+                }
+                
+                id(macro_last_event_time) = step.hold_duration_ms;
+
+            # ============================================================
+            # STEP C: SUSTAINED HOLD PACING (Bluetooth Repeat Streaming)
+            # ============================================================
             - if:
                 condition:
-                  lambda: |-
-                    extern UniversalFlashMacro active_recording_buffer;
-                    int idx = id(macro_step_counter);
-                    // Check if this step is a release edge meant to hold down an active key
-                    return (active_recording_buffer.steps[idx].event_state == KEY_EVENT_UP && id(macro_last_event_time) > 400);
+                  lambda: 'return (id(macro_last_event_time) > 400);'
                 then:
-                  # ---  SUSTAINED HOLD STREAMING GATES MATCHING 15MS LOW-LEVEL PACKET PACING ---
                   - while:
                       condition:
                         lambda: 'return (id(macro_last_event_time) > 15);'
@@ -719,66 +783,40 @@ script:
                             extern UniversalFlashMacro active_recording_buffer;
                             int idx = id(macro_step_counter);
                             const auto& step = active_recording_buffer.steps[idx];
-
-                            // Issue continuous keep-alive updates using the HOLDING state (1)
-                            ESP_LOGV("MACRO_PLAY", "Sending Low-Latency Keep-Alive frame for: %s", step.action_string);
                             fire_bluetooth_hid_action(step.action_string, KEY_EVENT_HOLDING); 
-
-                            // Deduct the synchronized 15ms interval from our pacing tracking cache
                             id(macro_last_event_time) -= 15;
-                  
-                  # Consume any remaining small fractional remainder window under 15ms cleanly
                   - delay: !lambda "return id(macro_last_event_time);"
-
                 else:
-                  # --- STANDARD TAP DELAY PATH (<= 400ms) ---
                   - delay: !lambda "return id(macro_last_event_time);"
-
 
             # ============================================================
-            # STEP B: LOW-OVERHEAD INJECTION PIPELINE (PLAYBACK)
+            # STEP D: EXECUTE KEY UP RELEASE STROKE
             # ============================================================
             - lambda: |-
                 extern UniversalFlashMacro active_recording_buffer;
                 int idx = id(macro_step_counter);
                 const auto& step = active_recording_buffer.steps[idx];
 
-                if (step.event_state == KEY_EVENT_DOWN) {
-                  ESP_LOGI("MACRO_PLAY", "Firing Step [%d]: DOWN -> '%s'", idx, step.action_string);
-                  
-                  if (std::strcmp(step.action_string, "power_on") == 0) {
-                    id(power_on).press(); // Safely fires your wake token blast script
-                  }
-                  else if (std::strcmp(step.action_string, "power_off") == 0) {
-                    id(power_off).press(); // Safely executes sustained power-off drop scripts
-                  }
-                  else {
-                    // Standard routing for regular keys
-                    fire_bluetooth_hid_action(step.action_string, KEY_EVENT_DOWN); 
-                  }
-                }
-                else if (step.event_state == KEY_EVENT_UP) {
-                  ESP_LOGI("MACRO_PLAY", "Firing Step [%d]: UP -> Releasing '%s'", idx, step.action_string);
-                  
-                  if (std::strcmp(step.action_string, "power_on") != 0 && std::strcmp(step.action_string, "power_off") != 0) {
-                    // Scripted operations manage their own release windows.
-                    // Only process standard pass-through physical keys here.
-                    fire_bluetooth_hid_action(step.action_string, KEY_EVENT_UP); 
-                  }
+                if (std::strcmp(step.action_string, "power_on") != 0 && std::strcmp(step.action_string, "power_off") != 0) {
+                  fire_bluetooth_hid_action(step.action_string, KEY_EVENT_UP); 
                 }
                 
-                // Advance the loop step index counter naturally without disrupting loop delays
+                // Increment internal index value cleanly to sync next iteration
                 id(macro_step_counter) = idx + 1;
 
+      # ============================================================
+      # TERMINAL PIPELINE STATE CLEANUPS
+      # ============================================================
       - lambda: |-
           id(macro_playback_active) = false;
           ESP_LOGI("MACRO_PLAY", "Asynchronous macro playback completed successfully.");
 
+          // Close out lights and sound volume confirmations
+          id(macro_indicator_clear_all)->execute();
+
           id(showing_special_info) = true;
           id(display_show)->execute(true, "Macro Complete", "All steps executed", "Action Mode");
           id(showing_special_expiration_timer).execute();
-
-
 
   # ====================================================================
   # Automated 5-Second Expiration Timer for Prefix Playback
@@ -1509,10 +1547,13 @@ script:
   - id: showing_special_expiration_timer
     mode: restart
     then:
-      - delay: 4s # how long without another IR button press before special display times out.
+      - delay: 4s 
       - lambda: |-
-                ESP_LOGD("Info Show", "Showing special info timed out.");
-                id(showing_special_info) = false;
+          ESP_LOGD("Info Show", "Showing special info timed out.");
+          id(showing_special_info) = false; // Opens the display gate back up
+          
+          // Force an instant foreground refresh to redraw your standard remote menu
+          id(display_show)->execute(false, "Action Mode", active_profile_workspace.profile_name, "");
 
   # =================================================================
   - id: set_profile_timeout_watcher

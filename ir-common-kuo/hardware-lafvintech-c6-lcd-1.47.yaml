@@ -116,7 +116,7 @@ script:
       green: float       # Green channel (0.0 to 1.0)
       blue: float        # Blue channel (0.0 to 1.0)
       brightness: float  # Brightness (0.0 to 1.0)
-    mode: restart
+    mode: single
     then:
       - light.turn_on:
           id: indicator_led
@@ -127,7 +127,7 @@ script:
           transition_length: 0s  
           
   - id: turn_led_off_custom
-    mode: restart
+    mode: single
     then:
       - light.turn_off:
           id: indicator_led

@@ -116,12 +116,12 @@ script:
       green: float       # Ignored on Ideaspark, kept for API matching
       blue: float        # Ignored on Ideaspark, kept for API matching
       brightness: float  # Ignored on Ideaspark, kept for API matching
-    mode: restart
+    mode: single
     then:
       - switch.turn_on: indicator_led
 
   - id: turn_led_off_custom
-    mode: restart
+    mode: single
     then:
       - switch.turn_off: indicator_led
                     
