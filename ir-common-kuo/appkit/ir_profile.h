@@ -2222,7 +2222,7 @@ inline esp_err_t root_handler(httpd_req_t *req) {
     <button class="btn-test util" onclick="sendClick('token_clear')">Token CLEAR</button>
     <button class="btn-test util" onclick="sendClick('token_recall')">Token RECALL</button>
     <button class="btn-test ble"  onclick="sendClick('ble_clear')">BLE CLEAR</button>
-Use  </div>
+  </div>
 </div>
 )rawliteral", HTTPD_RESP_USE_STRLEN); // <-- This safely closes Chunk 2
 
