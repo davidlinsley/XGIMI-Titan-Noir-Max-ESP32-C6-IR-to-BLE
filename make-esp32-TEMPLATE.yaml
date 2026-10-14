@@ -36,7 +36,7 @@ substitutions:
 packages: 
   # 3 =======  ESP32 board, Uncomment one (and only one) to specify board ===================
   
-  #hardware_package: !include ir-common-kuo/hardware-esp32-c3-0.42-OLED.yaml         # supports built-in 0.42 inch OLED display
+  hardware_package: !include ir-common-kuo/hardware-esp32-c3-0.42-OLED.yaml         # supports built-in 0.42 inch OLED display
   #hardware_package: !include ir-common-kuo/hardware-esp32-c6-wroom-1.yaml           # recommend add external 0.9 inch i2c OLED display
   #hardware_package: !include ir-common-kuo/hardware-waveshare-s3-lcd-1.47B.yaml     # requires IR sensor WITHOUT LED (VS1838B)
   #hardware_package: !include ir-common-kuo/hardware-heltec-hiletgo-s3-0.96-OLED-v3.yaml # needs special cable for logging
