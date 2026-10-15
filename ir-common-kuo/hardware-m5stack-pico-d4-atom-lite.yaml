@@ -20,7 +20,9 @@ esp32:
     type: esp-idf
       
 
-# Optional 0.9 inch i2c OLED display on 4 pin J2 Grove Connector
+# Optional OLED display plugs directly into 4 pin J2 Grove Connector
+# Must set -display model (later in this file) to match screen used.  
+
 # display sda to GPIO21
 # display scl to GPIO25
 # display Vcc to 5V
@@ -133,10 +135,14 @@ font:
     size: 11
 
     
-# External SSD1306 128x32 OLED screen
+# External OLED screen
 display:
   - platform: ssd1306_i2c
-    model: "SSD1306 128x32"
+  
+    #uncomment one of below to specify display
+    model: "SSD1306 128x32"  # 0.91 inch SSD1306 128x32 i2c OLED display
+    #model: "SSD1306 128x64" # 0.96 inch SSD12864 128x64 i2c OLED display
+
     address: 0x3C
     id: myDisplay
     offset_x: 0
@@ -147,15 +153,25 @@ display:
     pages:
       - id: active_page_std
         lambda: |-
-          it.print(0, 0,  id(my_fontMedium), id(myDisplay_line1).c_str());
-          it.print(0, 9, id(my_fontLarge), id(myDisplay_line2).c_str());
-          it.print(0, 20, id(my_fontLarge), id(myDisplay_line3).c_str());
+          int screen_h = it.get_height();
+          int Y1 = 0; 
+          int Y2 = screen_h * 9 / 32;
+          int Y3 = screen_h * 20 / 32;
+
+          it.print(0, Y1,  id(my_fontMedium), id(myDisplay_line1).c_str());
+          it.print(0, Y2, id(my_fontLarge), id(myDisplay_line2).c_str());
+          it.print(0, Y3, id(my_fontLarge), id(myDisplay_line3).c_str());
 
       - id: active_page_small
         lambda: |-
-          it.print(0, 0,  id(my_fontSmall), id(myDisplay_line1).c_str());
-          it.print(0, 10, id(my_fontSmall), id(myDisplay_line2).c_str());
-          it.print(0, 20, id(my_fontSmall), id(myDisplay_line3).c_str());
+          int screen_h = it.get_height();
+          int Y1 = 0; 
+          int Y2 = screen_h * 10 / 32;
+          int Y3 = screen_h * 20 / 32;
+          
+          it.print(0, Y1,  id(my_fontSmall), id(myDisplay_line1).c_str());
+          it.print(0, Y2, id(my_fontSmall), id(myDisplay_line2).c_str());
+          it.print(0, Y3, id(my_fontSmall), id(myDisplay_line3).c_str());
 
       - id: blank_page
         lambda: |-
